@@ -113,12 +113,17 @@ public static class SelfTest
         {
             Store.Root = temp + Path.DirectorySeparatorChar;
             Store.Save(new Settings { AutoConnect = false, CheckUpdates = false, CloseToTray = true, Theme = "dark" });
-            var app = new Application(); var window = new MainWindow(quiet: true);
+            var app = new Application(); var window = new MainWindow(quiet: true,
+                latestAppRelease: _ => Task.FromResult<Release?>(new Release("99.0.0", "https://example.invalid/update.zip", "", 1, "Проверка уведомления")));
             window.Closed += (_, _) => closed = true;
             window.Loaded += (_, _) => window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
             {
                 try
                 {
+                    Assert(window.AppNotice.Visibility == Visibility.Visible && window.AppNotice.Content.ToString() == "Обновить Razret", "app update notice appears with automatic engine checks disabled");
+                    Assert(window.AppInstallButton.IsEnabled && window.AppReleaseNotes.Text == "Проверка уведомления", "available app update waits for explicit installation");
+                    window.AppNotice.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    Assert(window.Pages.SelectedIndex == 2, "app update notice opens updates");
                     window.Close(); Assert(!closed && !window.IsVisible, "close hides window without ending application");
                     window.ShowFromTray(); Assert(window.IsVisible && !closed, "restore from tray");
                     window.Pages.SelectedIndex = 1; window.UpdateLayout(); Assert(window.StartupBox.IsVisible, "settings reachable");

@@ -16,6 +16,10 @@ public partial class MainWindow : Window
     Release? release;
     Release? appRelease;
     Task? updateCheck;
+    bool appCheckRunning;
+    string? notifiedAppVersion;
+    readonly CancellationTokenSource lifetime = new();
+    readonly DispatcherTimer appUpdateMonitor = new() { Interval = TimeSpan.FromHours(6) };
     readonly List<Result> results = [];
     readonly DispatcherTimer monitor = new() { Interval = TimeSpan.FromSeconds(3) };
     bool wasRunning;
@@ -27,8 +31,10 @@ public partial class MainWindow : Window
     Row? cardProfile;
     internal string? PowerStrategy => cardProfile?.Name;
     bool loadingTheme = true;
-    public MainWindow(bool preview = false, bool startup = false, bool quiet = false)
+    readonly Func<CancellationToken, Task<Release?>> latestAppRelease;
+    public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
     {
+        this.latestAppRelease = latestAppRelease ?? AppUpdater.Latest;
         InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; SelectedExpander.IsOpen = false; } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
         Appearance.Apply(this, settings.Theme); Select(ThemeBox, settings.Theme); loadingTheme = false;
         TrayBox.IsChecked = settings.CloseToTray;
@@ -65,12 +71,14 @@ public partial class MainWindow : Window
             if (settings.SetupComplete && (settings.AutoConnect || startup) && settings.Strategy != null && Engine.Admin)
                 await Work(async ct => { await engine.Start(settings.Strategy, settings, ct); Connected(); });
             else if (settings.SetupComplete && !Engine.Admin) Footer.Text = "Для включения обхода нажмите «Права администратора».";
-            if (settings.CheckUpdates) await Task.WhenAll(CheckUpdate(), CheckAppUpdate());
+            await Task.WhenAll(CheckAppUpdate(lifetime.Token), settings.CheckUpdates ? CheckUpdate() : Task.CompletedTask);
         };
+        appUpdateMonitor.Tick += async (_, _) => { if (operation == null) await CheckAppUpdate(lifetime.Token); };
+        if (!preview) appUpdateMonitor.Start();
         monitor.Tick += (_, _) => { bool running = engine.Running; if (operation == null && wasRunning && !running) { StatusTitle.Text = "Обход остановился"; StatusDetail.Text = "Движок завершился. Откройте журнал или повторите подбор."; ToggleButton.Content = "Включить"; Refresh(); } wasRunning = running; };
         if (!preview) monitor.Start();
         Closing += (_, e) => { if (!preview && !allowExit && settings.CloseToTray) { e.Cancel = true; HideToTray(); return; } if (operation != null) { operation.Cancel(); e.Cancel = true; Footer.Text = "Отменяем операцию и восстанавливаем состояние. После завершения можно закрыть окно."; } };
-        Closed += (_, _) => { monitor.Stop(); tray?.Dispose(); engine.Dispose(); };
+        Closed += (_, _) => { lifetime.Cancel(); appUpdateMonitor.Stop(); monitor.Stop(); tray?.Dispose(); engine.Dispose(); };
     }
     static void Select(ComboBox box, string tag) => box.SelectedItem = box.Items.Cast<ComboBoxItem>().First(x => (string)x.Tag == tag);
     void Refresh()
@@ -240,21 +248,32 @@ public partial class MainWindow : Window
     async void AutoClick(object sender, RoutedEventArgs e) => await Work(ct => Scan(Strategies.List(Store.Engine), true, ct));
     async Task CheckAppUpdate(CancellationToken ct = default)
     {
+        if (appCheckRunning || lifetime.IsCancellationRequested) return;
+        appCheckRunning = true;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, lifetime.Token);
         AppCheckButton.IsEnabled = false;
         try
         {
             AppUpdateText.Text = "Проверяем обновления Razret…";
-            appRelease = await AppUpdater.Latest(ct);
+            appRelease = await latestAppRelease(linked.Token);
+            linked.Token.ThrowIfCancellationRequested();
             AppUpdateText.Text = !AppUpdater.Configured ? "Razret " + AppUpdater.Version + ". Источник обновлений будет подключён после настройки GitHub."
                 : appRelease == null ? "Razret " + AppUpdater.Version + " — новых выпусков нет."
                 : "Доступен Razret " + appRelease.Version + ". Настройки и выбранная стратегия сохранятся. После установки приложение перезапустится.";
             AppReleaseNotes.Text = appRelease?.Notes ?? "";
             AppNotice.Visibility = appRelease != null ? Visibility.Visible : Visibility.Collapsed;
-            AppNotice.Content = "Новая версия";
+            AppNotice.Content = "Обновить Razret";
+            AppNotice.ToolTip = appRelease == null ? null : "Доступен Razret " + appRelease.Version + ". Нажмите, чтобы посмотреть изменения и установить.";
+            if (appRelease != null && notifiedAppVersion != appRelease.Version)
+            {
+                notifiedAppVersion = appRelease.Version;
+                if (!quiet) tray?.UpdateAvailable(appRelease.Version, () => Dispatcher.Invoke(() => { ShowFromTray(); Pages.SelectedIndex = 2; }));
+            }
         }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { AppUpdateText.Text = "Не удалось проверить обновления Razret. Можно повторить позже. " + ex.Message; }
-        finally { AppCheckButton.IsEnabled = operation == null; AppInstallButton.IsEnabled = operation == null && appRelease != null; }
+        finally { appCheckRunning = false; AppCheckButton.IsEnabled = operation == null; AppInstallButton.IsEnabled = operation == null && appRelease != null; }
     }
     async void AppCheckClick(object sender, RoutedEventArgs e) => await Work(CheckAppUpdate);
     void AppNoticeClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 2;

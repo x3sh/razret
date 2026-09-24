@@ -54,6 +54,7 @@ public sealed class TrayIcon : IDisposable
 {
     readonly System.Windows.Forms.NotifyIcon icon;
     readonly System.Drawing.Icon drawingIcon;
+    Action? balloonClick;
     public TrayIcon(Action open, Action exit)
     {
         drawingIcon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "razret.ico"), 32, 32);
@@ -62,9 +63,15 @@ public sealed class TrayIcon : IDisposable
         menu.Items.Add("Открыть Razret", null, (_, _) => open());
         menu.Items.Add("Выйти и выключить обход", null, (_, _) => exit());
         icon.ContextMenuStrip = menu; icon.DoubleClick += (_, _) => open();
+        icon.BalloonTipClicked += (_, _) => balloonClick?.Invoke();
     }
     public void Status(bool running) => icon.Text = running ? "Razret · обход включён" : "Razret · обход выключен";
-    public void Hint() => icon.ShowBalloonTip(3000, "Razret работает в трее", "Двойной щелчок по значку откроет окно. Для остановки выберите «Выйти и выключить обход».", System.Windows.Forms.ToolTipIcon.Info);
+    public void Hint() { balloonClick = null; icon.ShowBalloonTip(3000, "Razret работает в трее", "Двойной щелчок по значку откроет окно. Для остановки выберите «Выйти и выключить обход».", System.Windows.Forms.ToolTipIcon.Info); }
+    public void UpdateAvailable(string version, Action openUpdates)
+    {
+        balloonClick = openUpdates;
+        icon.ShowBalloonTip(8000, "Доступно обновление Razret", "Версия " + version + ". Нажмите, чтобы посмотреть изменения. Установка — только по вашему нажатию.", System.Windows.Forms.ToolTipIcon.Info);
+    }
     public void Dispose() { icon.Visible = false; icon.ContextMenuStrip?.Dispose(); icon.Dispose(); drawingIcon.Dispose(); }
     [DllImport("user32.dll")] static extern bool DestroyIcon(nint icon);
 }

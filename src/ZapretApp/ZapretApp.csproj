@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
-    <AssemblyName>Razret</AssemblyName><Version>0.7.1</Version><Product>Razret</Product><Title>Razret</Title>
+    <AssemblyName>Razret</AssemblyName><Version>0.7.2</Version><Product>Razret</Product><Title>Razret</Title>
     <ApplicationIcon>Assets/razret.ico</ApplicationIcon>
     <UpdateRepository Condition="'$(UpdateRepository)' == ''">x3sh/razret</UpdateRepository>
   </PropertyGroup>
