@@ -16,7 +16,7 @@ public sealed class Settings
     public string GameMode { get; set; } = "off";
     public string Ipset { get; set; } = "none";
     public bool AutoConnect { get; set; } = true;
-    public bool CheckUpdates { get; set; } = true;
+    public bool CheckUpdates { get; set; }
     public bool SetupComplete { get; set; }
     public bool StartWithWindows { get; set; }
     public bool CloseToTray { get; set; } = true;
