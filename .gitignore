@@ -1,0 +1,13 @@
+tools/
+downloads/
+upstream/
+app/
+**/bin/
+**/obj/
+research/source-main/
+build/
+dist/
+archive/
+research/
+*.user
+*.suo

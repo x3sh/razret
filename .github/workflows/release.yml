@@ -1,0 +1,38 @@
+name: Build and release Razret
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+concurrency:
+  group: razret-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build, verify and package
+        shell: pwsh
+        run: ./release.ps1 -Repository '${{ github.repository }}'
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          EVENT_REF: ${{ github.ref }}
+        run: |
+          [xml]$project = Get-Content src/ZapretApp/ZapretApp.csproj
+          $version = $project.Project.PropertyGroup.Version
+          $tag = "v$version"
+          if ($env:EVENT_REF.StartsWith('refs/tags/') -and $env:EVENT_REF -ne "refs/tags/$tag") { throw 'Tag does not match application version.' }
+          gh release view $tag --repo $env:REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists; increase the version first." }
+          gh release create $tag "dist/Razret-$version-win-x64.zip" 'dist/Razret-app-update-win-x64.zip' --repo $env:REPOSITORY --target $env:COMMIT_SHA --title "Razret $version" --notes-file release-notes.md --latest
+          if ($LASTEXITCODE) { throw 'Release publication failed.' }
