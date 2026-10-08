@@ -51,8 +51,9 @@ export function summarize(reports, includeTesters = true) {
         strategies.set(m.Strategy, row);
       }
       if (m.Kind === 'error') { errorCount += m.Count; const key = m.Error; failures.set(key, (failures.get(key) ?? 0) + m.Count); }
-      if (m.Kind === 'probe_failure' || m.Kind === 'error' || m.Kind.endsWith('_install') && m.Outcome === 'failure' || m.Kind.endsWith('_download') && m.Outcome === 'failure') {
-        const value={kind:m.Kind,category:m.Error??null,cause:m.Cause??null,scope:m.Scope??null,strategy:m.Strategy??null,service:m.Service??null};
+      const legacyFailure=report.Schema===1 && m.Kind==='service_test' && m.Outcome==='failure';
+      if (legacyFailure || m.Kind === 'probe_failure' || m.Kind === 'error' || m.Kind.endsWith('_install') && m.Outcome === 'failure' || m.Kind.endsWith('_download') && m.Outcome === 'failure') {
+        const value={kind:m.Kind,category:m.Error??null,cause:m.Cause??null,scope:m.Scope??(legacyFailure?'strategy_test':null),strategy:m.Strategy??null,service:m.Service??null};
         const key=JSON.stringify(value);const row=problems.get(key)??{...value,count:0};row.count+=m.Count;problems.set(key,row);
       }
       if (m.Kind.endsWith('_install') || m.Kind.endsWith('_download')) {

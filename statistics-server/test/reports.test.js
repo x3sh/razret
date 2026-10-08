@@ -17,6 +17,8 @@ test('protocol rejects identifiers, precise times, raw messages, paths and inval
 });
 test('dashboard summarizes outcomes without distinct-user counts',()=>{
   const data=summarize([validateReport(report())]);assert.equal(data.tests,2);assert.equal(data.passed,2);assert.equal(data.strategies[0].tests,2);assert.equal('users' in data,false);
+  const legacy=report();legacy.Metrics.push({Kind:'service_test',Outcome:'failure',Strategy:'general.bat',Service:'discord',Count:1});
+  const old=summarize([validateReport(legacy)]);assert.equal(old.problems[0].service,'discord');assert.equal(old.problems[0].cause,null);
 });
 test('v2 groups random tester IDs without linking legacy reports or leaking causes',()=>{
   const first={...report(),Schema:2,TesterId:randomUUID()},second={...report(),Schema:2,TesterId:randomUUID()};
