@@ -46,6 +46,8 @@ if (!(Test-Path -LiteralPath "$check/engine")) { Copy-Item -LiteralPath $EngineP
 if ($LASTEXITCODE) { throw 'Self-test failed.' }
 & $Dotnet "$check/Razret.dll" --ui-test
 if ($LASTEXITCODE) { throw 'UI test failed.' }
+& $Dotnet "$check/Razret.dll" --statistics-test
+if ($LASTEXITCODE) { throw 'Statistics privacy and delivery test failed.' }
 Compress-Archive -LiteralPath "$stage/Razret.exe" -DestinationPath "$PSScriptRoot/dist/Razret-app-update-win-x64.zip" -Force
 Compress-Archive -LiteralPath $portable -DestinationPath "$PSScriptRoot/dist/Razret-$version-win-x64.zip" -Force
 Get-FileHash "$PSScriptRoot/dist/Razret-app-update-win-x64.zip", "$PSScriptRoot/dist/Razret-$version-win-x64.zip" | Format-Table

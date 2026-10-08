@@ -17,6 +17,7 @@ public static class Program
         {
             if (args.FirstOrDefault() == "--apply-app-update") return AppUpdater.Apply(args);
             if (args.Contains("--self-test")) { SelfTest.Run(); return 0; }
+            if (args.Contains("--statistics-test")) { StatisticsTests.Run().GetAwaiter().GetResult(); return 0; }
             if (args.Contains("--probe")) { Store.Write("baseline-manual.json", Checks.Run(CancellationToken.None).GetAwaiter().GetResult()); return 0; }
             if (args.Contains("--update-test")) { SelfTest.Update().GetAwaiter().GetResult(); return 0; }
             if (args.Contains("--ui-test")) { SelfTest.Desktop(); return 0; }

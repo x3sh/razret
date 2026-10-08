@@ -1,0 +1,13 @@
+{
+  "name": "razret-statistics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "scripts": {
+    "build": "node --check api/index.js && node --check lib/protocol.js && node --check lib/storage.js && node --check public/dashboard.js",
+    "test": "node --test test/*.test.js",
+    "dev": "node dev.mjs"
+  },
+  "dependencies": { "@vercel/blob": "2.8.1" }
+}

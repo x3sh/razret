@@ -12,6 +12,9 @@ public partial class MainWindow : Window
 {
     readonly Engine engine = new();
     readonly Settings settings;
+    readonly Statistics statistics;
+    bool loadingStatistics = true;
+    readonly DispatcherTimer statisticsTimer = new() { Interval = TimeSpan.FromMinutes(10) };
     CancellationTokenSource? operation;
     Release? release;
     Release? appRelease;
@@ -36,6 +39,9 @@ public partial class MainWindow : Window
     {
         this.latestAppRelease = latestAppRelease ?? AppUpdater.Latest;
         InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; SelectedExpander.IsOpen = false; } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
+        statistics = new(settings.ShareStatistics, preview || quiet);
+        StatisticsBox.IsChecked = settings.ShareStatistics;
+        loadingStatistics = false;
         Appearance.Apply(this, settings.Theme); Select(ThemeBox, settings.Theme); loadingTheme = false;
         TrayBox.IsChecked = settings.CloseToTray;
         try { StartupBox.IsChecked = Startup.Enabled(); }
@@ -67,6 +73,15 @@ public partial class MainWindow : Window
         Loaded += async (_, _) =>
         {
             if (preview) return;
+            if (!quiet && Statistics.Configured && !settings.StatisticsConsentAsked)
+            {
+                settings.ShareStatistics = MessageBox.Show(this,
+                    "Помочь улучшить Razret?\n\nОтправлять сводные результаты проверок стратегий, категории технических ошибок и итоги обновлений. Без истории включений, точного времени действий, идентификатора устройства, переписки и содержимого трафика.\n\nОтправку можно выключить в настройках в любой момент.",
+                    "Статистика качества", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+                settings.StatisticsConsentAsked = true; Store.Save(settings);
+                StatisticsBox.IsChecked = settings.ShareStatistics; statistics.SetEnabled(settings.ShareStatistics);
+            }
+            ReadUpdateReceipt();
             if (startup) Hide();
             if (settings.SetupComplete && (settings.AutoConnect || startup) && settings.Strategy != null && Engine.Admin)
                 await Work(async ct => { await engine.Start(settings.Strategy, settings, ct); Connected(); });
@@ -75,10 +90,33 @@ public partial class MainWindow : Window
         };
         appUpdateMonitor.Tick += async (_, _) => { if (operation == null) await CheckAppUpdate(lifetime.Token); };
         if (!preview) appUpdateMonitor.Start();
-        monitor.Tick += (_, _) => { bool running = engine.Running; if (operation == null && wasRunning && !running) { StatusTitle.Text = "Обход остановился"; StatusDetail.Text = "Движок завершился. Откройте журнал или повторите подбор."; ToggleButton.Content = "Включить"; Refresh(); } wasRunning = running; };
+        statisticsTimer.Tick += async (_, _) => await statistics.Flush(lifetime.Token);
+        if (!preview && !quiet) statisticsTimer.Start();
+        monitor.Tick += (_, _) => { bool running = engine.Running; if (operation == null && wasRunning && !running) { statistics.UnexpectedExit(settings.Strategy); StatusTitle.Text = "Обход остановился"; StatusDetail.Text = "Движок завершился. Откройте журнал или повторите подбор."; ToggleButton.Content = "Включить"; Refresh(); } wasRunning = running; };
         if (!preview) monitor.Start();
         Closing += (_, e) => { if (!preview && !allowExit && settings.CloseToTray) { e.Cancel = true; HideToTray(); return; } if (operation != null) { operation.Cancel(); e.Cancel = true; Footer.Text = "Отменяем операцию и восстанавливаем состояние. После завершения можно закрыть окно."; } };
-        Closed += (_, _) => { lifetime.Cancel(); appUpdateMonitor.Stop(); monitor.Stop(); tray?.Dispose(); engine.Dispose(); };
+        Closed += (_, _) => { lifetime.Cancel(); statisticsTimer.Stop(); statistics.Dispose(); appUpdateMonitor.Stop(); monitor.Stop(); tray?.Dispose(); engine.Dispose(); };
+    }
+    void ReadUpdateReceipt()
+    {
+        if (quiet) return;
+        var path = Path.Combine(Store.Data, "app-update-result.json");
+        try
+        {
+            if (!File.Exists(path)) return;
+            var receipt = System.Text.Json.JsonSerializer.Deserialize<AppUpdateReceipt>(File.ReadAllText(path));
+            File.Delete(path);
+            if (receipt != null && (receipt.Outcome == "failure" || receipt.Version == AppUpdater.Version))
+                statistics.Update("app_install", receipt.Outcome, receipt.Version);
+        }
+        catch (Exception ex) when (ex is IOException or System.Text.Json.JsonException or UnauthorizedAccessException) { }
+    }
+    void StatisticsChanged(object sender, RoutedEventArgs e)
+    {
+        if (loadingStatistics) return;
+        settings.ShareStatistics = StatisticsBox.IsChecked == true;
+        settings.StatisticsConsentAsked = true;
+        Store.Save(settings); statistics.SetEnabled(settings.ShareStatistics && !preview && !quiet);
     }
     static void Select(ComboBox box, string tag) => box.SelectedItem = box.Items.Cast<ComboBoxItem>().First(x => (string)x.Tag == tag);
     void Refresh()
@@ -214,8 +252,8 @@ public partial class MainWindow : Window
         operation = new(); SetBusy(true);
         try { await action(operation.Token); }
         catch (OperationCanceledException) { if (!engine.Running) StatusTitle.Text = "Проверка остановлена"; Footer.Text = "Операция отменена. Предыдущее состояние восстановлено, если оно было активно."; }
-        catch (Exception ex) { if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
-        finally { operation.Dispose(); operation = null; SetBusy(false); Progress.IsIndeterminate = false; Progress.Visibility = Visibility.Collapsed; if (allowExit) _ = Dispatcher.BeginInvoke(new Action(Close)); Refresh(); wasRunning = engine.Running; ToggleButton.Content = engine.Running ? "Выключить" : "Включить"; UpdateActive(); }
+        catch (Exception ex) { statistics.Failure(ex, settings.Strategy); if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
+        finally { operation.Dispose(); operation = null; SetBusy(false); Progress.IsIndeterminate = false; Progress.Visibility = Visibility.Collapsed; if (allowExit) _ = Dispatcher.BeginInvoke(new Action(Close)); Refresh(); wasRunning = engine.Running; ToggleButton.Content = engine.Running ? "Выключить" : "Включить"; UpdateActive(); _ = statistics.Flush(lifetime.Token); }
     }
     void SetBusy(bool busy)
     {
@@ -282,8 +320,12 @@ public partial class MainWindow : Window
         if (appRelease == null) return;
         AppUpdateText.Text = "Скачиваем и проверяем Razret…";
         Progress.IsIndeterminate = true;
-        var area = await AppUpdater.Stage(appRelease, ct);
+        string area;
+        try { area = await AppUpdater.Stage(appRelease, ct); statistics.Update("app_download", "success", appRelease.Version); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { statistics.Update("app_download", "failure", appRelease.Version, ex); throw; }
         ct.ThrowIfCancellationRequested();
+        await statistics.Flush(ct);
         AppUpdater.Launch(area);
         engine.Stop(); allowExit = true;
     });
@@ -324,6 +366,7 @@ public partial class MainWindow : Window
                 }
             }
             testedAt = DateTimeOffset.Now;
+            foreach (var result in results.Where(r => names.Contains(r.Name))) statistics.Test(result);
             Store.Write("last-results.json", new { Date = testedAt.Value, Engine = Updater.Version, settings.GameMode, settings.Ipset, Results = Checks.Rank(results).ToList() });
             Refresh(); Progress.Value = 100;
             var best = Checks.Rank(results).FirstOrDefault(r => r.Complete && (!activate || r.Probes.Count >= 10));
@@ -419,7 +462,11 @@ public partial class MainWindow : Window
         if (release == null || release.Version == Updater.Version) return;
         var previous = engine.Active; string? backup = null;
         Progress.IsIndeterminate = true; UpdateText.Text = "Скачиваем и проверяем архив…";
-        var candidate = await Updater.Stage(release, ct); ct.ThrowIfCancellationRequested();
+        string candidate;
+        try { candidate = await Updater.Stage(release, ct); statistics.Update("engine_download", "success", release.Version); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { statistics.Update("engine_download", "failure", release.Version, ex); throw; }
+        ct.ThrowIfCancellationRequested();
         List<Probe>? before = previous != null ? await Checks.Run(ct) : null;
         engine.Stop();
         try
@@ -431,10 +478,11 @@ public partial class MainWindow : Window
                 await engine.Start(previous, settings, ct); var after = await Checks.Run(ct);
                 if (before!.Any(p => p.Ok && !after.Any(a => a.Service == p.Service && a.Ok))) throw new IOException("После обновления ухудшилась доступность. Выполнен откат.");
             }
-            Updater.Commit(); Refresh(); ShowRelease(); if (previous != null) Connected(); UpdateText.Text = "Установлена версия " + Updater.Version + ". Предыдущий комплект сохранён в backups.";
+            Updater.Commit(); statistics.Update("engine_install", "success", release.Version); Refresh(); ShowRelease(); if (previous != null) Connected(); UpdateText.Text = "Установлена версия " + Updater.Version + ". Предыдущий комплект сохранён в backups.";
         }
-        catch
+        catch (Exception ex)
         {
+            if (ex is not OperationCanceledException) statistics.Update("engine_install", "failure", release.Version, ex);
             engine.Stop(); if (backup != null) Updater.Rollback(backup);
             if (previous != null) await engine.Start(previous, settings, CancellationToken.None);
             throw;

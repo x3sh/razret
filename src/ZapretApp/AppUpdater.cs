@@ -9,6 +9,8 @@ using System.Text.RegularExpressions;
 
 namespace ZapretApp;
 
+public sealed record AppUpdateReceipt(string Version, string Outcome);
+
 // The app update archive contains only the self-contained Razret.exe.
 // Engine, user lists, settings and startup paths stay in place.
 public static class AppUpdater
@@ -72,6 +74,7 @@ public static class AppUpdater
         var candidate = Path.Combine(area, "Razret.exe");
         if (FileVersionInfo.GetVersionInfo(candidate).FileVersion != System.Version.Parse(release.Version).ToString(3) + ".0")
             throw new InvalidDataException("Версия приложения не совпала с релизом.");
+        File.WriteAllText(Path.Combine(area, "target-version.txt"), release.Version);
         return area;
     }
     internal static void Extract(string archive, string area)
@@ -117,6 +120,7 @@ public static class AppUpdater
                 Store.Log("Razret обновлён. Резервная копия: " + backup);
             }
             finally { mutex.ReleaseMutex(); }
+            Receipt(area, "success");
             if (Process.Start(new ProcessStartInfo(target) { UseShellExecute = true, WorkingDirectory = root }) == null)
                 throw new IOException("Не удалось перезапустить Razret.");
             return 0;
@@ -125,8 +129,20 @@ public static class AppUpdater
         {
             if (replaced) File.Copy(backup, target, true);
             Store.Log("Обновление Razret: " + ex);
+            Receipt(area, "failure");
             System.Windows.MessageBox.Show("Не удалось обновить Razret. Предыдущая версия сохранена.\n" + ex.Message, "Обновление Razret");
             return 1;
         }
+    }
+    static void Receipt(string area, string outcome)
+    {
+        try
+        {
+            if (!Store.Load().ShareStatistics) return;
+            var version = File.ReadAllText(Path.Combine(area, "target-version.txt"));
+            if (Regex.IsMatch(version, @"^\d{1,4}\.\d{1,4}\.\d{1,4}$"))
+                Store.Write("app-update-result.json", new AppUpdateReceipt(version, outcome));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
     }
 }

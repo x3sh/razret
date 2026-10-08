@@ -11,3 +11,7 @@ archive/
 research/
 *.user
 *.suo
+**/node_modules/
+**/.vercel/
+**/.env*
+statistics-server/.local-data/

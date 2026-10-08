@@ -22,6 +22,8 @@ public sealed class Settings
     public bool CloseToTray { get; set; } = true;
     public string? PostponedVersion { get; set; }
     public string Theme { get; set; } = "dark";
+    public bool ShareStatistics { get; set; }
+    public bool StatisticsConsentAsked { get; set; }
 }
 public record Probe(string Service, bool Ok, double Milliseconds, string Detail = "", double? Ping = null);
 public record Result(string Name, List<Probe> Probes)
