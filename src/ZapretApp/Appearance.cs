@@ -1,6 +1,8 @@
 using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 
 namespace ZapretApp;
 
@@ -16,19 +18,21 @@ public static class Appearance
         }
         var values = new Dictionary<string, (string Dark, string Light)>
         {
-            ["Canvas"] = ("#0E191C", "#EEF3F1"), ["Surface"] = ("#19282C", "#FFFFFF"),
-            ["MetricSurface"] = ("#13FFFFFF", "#DCF0E6"),
-            ["Text"] = ("#EDF7F4", "#183831"), ["Muted"] = ("#9FB9B4", "#58776D"),
-            ["Border"] = ("#2A4142", "#DCE7E1"), ["Button"] = ("#293E43", "#E3EDE7"),
-            ["Accent"] = ("#2BA987", "#187F63"), ["AccentText"] = ("#FFFFFF", "#FFFFFF"),
-            ["RowHover"] = ("#23383D", "#F5F7FB"), ["RowSelected"] = ("#304750", "#E4EEE9"),
-            ["RowActive"] = ("#203C33", "#EAF7EF"), ["RowActiveText"] = ("#96E5B5", "#237046"),
+            ["Canvas"] = ("#171E27", "#F2F4F8"), ["Surface"] = ("#202A36", "#FFFFFF"),
+            ["MetricSurface"] = ("#1B2430", "#F5F7FA"),
+            ["Text"] = ("#F1F5FC", "#202B3D"), ["Muted"] = ("#A6B5C9", "#617087"),
+            ["Border"] = ("#344151", "#DFE5EE"), ["Button"] = ("#2C394A", "#E7ECF4"),
+            ["Accent"] = ("#3984E8", "#256ED0"), ["AccentText"] = ("#FFFFFF", "#FFFFFF"),
+            ["RowHover"] = ("#29384A", "#F0F5FD"), ["RowSelected"] = ("#263F60", "#E5EFFF"),
+            ["RowActive"] = ("#223A34", "#EAF7EF"), ["RowActiveText"] = ("#96E5B5", "#237046"),
             ["FailedSurface"] = ("#33282C", "#FCF0F0"), ["FailedBorder"] = ("#67434A", "#DDB6BC"),
             ["WarningSurface"] = ("#3B3023", "#FFF6E7"), ["WarningBorder"] = ("#87612F", "#DCBF8E"),
-            ["Card"] = ("#19282C", "#FFFFFF"), ["CardActive"] = ("#163F34", "#DFF2E7"),
-            ["CardActiveBorder"] = ("#36765E", "#B7DCC7"), ["CardText"] = ("#F0FBF4", "#1A4730"),
-            ["CardMuted"] = ("#ADC2B5", "#567261"), ["Badge"] = ("#2C4F3D", "#D7EFDF"),
-            ["BadgeText"] = ("#B7F1CC", "#267345"), ["Notice"] = ("#293E5F", "#DDEBFF")
+            ["Card"] = ("#202A36", "#FFFFFF"), ["CardActive"] = ("#202A36", "#FFFFFF"),
+            ["CardActiveBorder"] = ("#3A495C", "#CBD7E8"), ["CardText"] = ("#F1F5FC", "#202B3D"),
+            ["CardMuted"] = ("#A6B5C9", "#617087"), ["Badge"] = ("#2C4F3D", "#D7EFDF"),
+            ["BadgeText"] = ("#B7F1CC", "#267345"), ["Notice"] = ("#233750", "#E7F0FF"),
+            ["Good"] = ("#61D997", "#209657"), ["Warning"] = ("#F0B955", "#B77716"),
+            ["Bad"] = ("#EF777C", "#D64550"), ["Unknown"] = ("#8090A4", "#8794A6")
         };
         foreach (var pair in values)
         {
@@ -36,8 +40,11 @@ public static class Appearance
             brush.Freeze(); window.Resources[pair.Key] = brush;
         }
         var card = new LinearGradientBrush(
-            (Color)ColorConverter.ConvertFromString(dark ? "#205A46" : "#E5F7EC"),
-            (Color)ColorConverter.ConvertFromString(dark ? "#14362F" : "#CDEADC"), new Point(0, 0), new Point(1, 1));
+            (Color)ColorConverter.ConvertFromString(dark ? "#283544" : "#FFFFFF"),
+            (Color)ColorConverter.ConvertFromString(dark ? "#202A36" : "#F7FAFE"), new Point(0, 0), new Point(1, 1));
         card.Freeze(); window.Resources["CardActive"] = card;
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle != nint.Zero) { int value = dark ? 1 : 0; DwmSetWindowAttribute(handle, 20, ref value, sizeof(int)); }
     }
+    [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(nint handle, int attribute, ref int value, int size);
 }

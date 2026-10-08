@@ -26,6 +26,9 @@ public sealed class Settings
     public bool StatisticsConsentAsked { get; set; }
     public int StatisticsConsentVersion { get; set; }
     public bool HideStrategies { get; set; }
+    public string StrategyView { get; set; } = "list";
+    public string? DismissedAppVersion { get; set; }
+    public string? DismissedEngineVersion { get; set; }
 }
 public record Probe(string Service, bool Ok, double Milliseconds, string Detail = "", double? Ping = null, string? Code = null);
 public record Result(string Name, List<Probe> Probes)

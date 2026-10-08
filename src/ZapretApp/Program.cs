@@ -61,17 +61,23 @@ public static class Program
                 if (args.Any(a => a.StartsWith("--snapshot"))) window.Loaded += (_, _) => window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
                 {
                     if (args.Contains("--snapshot-settings")) window.Pages.SelectedIndex = 1;
-                    if (args.Contains("--snapshot-updates")) { window.Pages.SelectedIndex = 2; window.AppUpdateText.Text = "Razret " + AppUpdater.Version + ". Источник обновлений будет подключён после настройки GitHub."; }
+                    if (args.Contains("--snapshot-updates")) { window.PreviewUpdatesState(); window.Pages.SelectedIndex = 2; }
                     if (args.Contains("--snapshot-dark")) Appearance.Apply(window, "dark");
                     if (args.Contains("--snapshot-advanced")) { window.Pages.SelectedIndex = 1; window.AdvancedExpander.IsExpanded = true; }
                     if (args.Contains("--snapshot-active")) window.PreviewActiveState();
                     if (args.Contains("--snapshot-light")) { Appearance.Apply(window, "light"); window.PreviewActiveState(); }
-                    if (args.Contains("--snapshot-narrow")) { window.Width = 700; window.Height = 780; window.PreviewActiveState(true); }
+                    if (args.Contains("--snapshot-narrow")) { window.Width = 500; window.Height = 620; window.PreviewActiveState(true); }
                     if (args.Contains("--snapshot-other")) window.PreviewActiveState(true);
                     if (args.Contains("--snapshot-hidden")) window.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    if (args.Contains("--snapshot-tiles")) window.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    if (args.Contains("--snapshot-notices")) window.PreviewUpdatesState();
                     if (args.Contains("--snapshot-busy")) window.PreviewBusyState();
                     if (args.Contains("--snapshot-expanded")) window.SelectedExpander.IsOpen = true;
+                    window.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+                    {
                     window.UpdateLayout();
+                    window.StrategyCard.InvalidateMeasure(); window.UpdateLayout();
+                    Store.Write("preview-layout.json", new { window.Width, window.Height, WindowContentHeight = ((FrameworkElement)window.Content).ActualHeight, Elements = new FrameworkElement[] { window.StrategyCard, window.MetricsGrid, window.Pages, window.StrategiesHeader, window.ResultsPanel, window.Footer, window.UpdateBadge }.Select(e => new { e.Name, Height = e.ActualHeight, Y = e.TranslatePoint(new Point(), window).Y, e.IsVisible }) });
                     var content = (FrameworkElement)window.Content;
                     if (args.Contains("--snapshot-expanded")) { window.SelectedExpander.Child.UpdateLayout(); content = (FrameworkElement)window.SelectedExpander.Child; }
                     if (args.Contains("--snapshot-menu"))
@@ -86,9 +92,14 @@ public static class Program
                     if (args.Contains("--snapshot-menu")) filename = args.Contains("--snapshot-light") ? "preview-menu-light.png" : "preview-menu-dark.png";
                     if (args.Contains("--snapshot-hidden")) filename = "preview-hidden.png";
                     if (args.Contains("--snapshot-busy")) filename = "preview-busy.png";
+                    if (args.Contains("--snapshot-tiles")) filename = "preview-tiles.png";
+                    if (args.Contains("--snapshot-notices")) filename = "preview-notices.png";
+                    if (args.Contains("--snapshot-narrow")) filename = "preview-narrow.png";
+                    if (args.Contains("--snapshot-advanced")) filename = "preview-advanced.png";
                     using (var output = File.Create(Path.Combine(Store.Data, filename))) png.Save(output);
                     Store.Write("preview-metrics.json", new { WorkingSetBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64, PrivateBytes = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64, Note = "UI snapshot, no running bypass, one measurement" });
                     window.Close();
+                    }));
                 }));
                 return app.Run(window);
             }
@@ -125,57 +136,79 @@ public static class SelfTest
             {
                 try
                 {
-                    Assert(window.AppNotice.Visibility == Visibility.Visible && window.AppNotice.Content.ToString() == "Обновить Razret", "app update notice appears with automatic engine checks disabled");
-                    Assert(window.AppInstallButton.IsEnabled && window.AppReleaseNotes.Text == "Проверка уведомления", "available app update waits for explicit installation");
+                    Assert(window.AppUpdateBanner.IsVisible, "app notice appears with automatic engine checks disabled");
+                    Assert(window.AppInstallButton.IsEnabled && window.AppReleaseNotes.Text == "Проверка уведомления", "app update waits for explicit installation");
+                    Assert(window.AppUpdateBanner.TranslatePoint(new Point(), window).Y < window.StrategyCard.TranslatePoint(new Point(), window).Y, "notice above current strategy");
                     window.AppNotice.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                    Assert(window.Pages.SelectedIndex == 2, "app update notice opens updates");
-                    window.Close(); Assert(!closed && !window.IsVisible, "close hides window without ending application");
+                    Assert(window.Pages.SelectedIndex == 2, "notice opens app updates");
+                    window.Pages.SelectedIndex = 0;
+                    window.DismissAppButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    Assert(!window.AppUpdateBanner.IsVisible && window.UpdateDot.Visibility == Visibility.Visible && window.AppInstallButton.IsEnabled, "dismissal hides banner but preserves available update");
+                    window.Close(); Assert(!closed && !window.IsVisible, "close hides to tray");
                     window.ShowFromTray(); Assert(window.IsVisible && !closed, "restore from tray");
                     window.Pages.SelectedIndex = 1; window.UpdateLayout(); Assert(window.StartupBox.IsVisible, "settings reachable");
                     var dark = ((SolidColorBrush)window.Resources["Canvas"]).Color;
                     window.ThemeBox.SelectedIndex = 1; Assert(((SolidColorBrush)window.Resources["Canvas"]).Color != dark, "theme switches without restart");
                     window.ThemeBox.SelectedIndex = 0; Assert(((SolidColorBrush)window.Resources["Canvas"]).Color == dark, "dark theme restored");
-                    window.Pages.SelectedIndex = 2; window.UpdateLayout(); Assert(window.CheckButton.IsVisible, "updates reachable");
-                    window.Pages.SelectedIndex = 0; window.UpdateLayout(); Assert(window.ResultsGrid.IsVisible, "home reachable");
                     var visual = new MainWindow(preview: true);
                     try
                     {
-                        visual.Show();
-                        visual.ResultsGrid.SelectedIndex = 2;
-                        Assert(visual.PowerStrategy == ((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name, "power uses selected strategy even before it has been saved");
+                        visual.Show(); visual.ResultsGrid.SelectedIndex = 2;
+                        Assert(visual.PowerStrategy == ((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name, "power uses selected strategy before saving");
                         visual.PreviewActiveState(); visual.UpdateLayout();
-                        Assert(((MainWindow.Row)visual.ResultsGrid.Items[0]).IsActive, "active strategy pinned first");
-                        Assert(visual.StrategyCard.TranslatePoint(new Point(), visual).Y < visual.ResultsGrid.TranslatePoint(new Point(), visual).Y, "summary card above strategy list");
-                        var togglePosition = visual.ToggleButton.TranslatePoint(new Point(), visual.StrategyCard);
-                        Assert(togglePosition.Y >= 0 && togglePosition.Y < visual.StrategyCard.ActualHeight, "power control inside summary card");
-                        Assert(visual.CardCaption.Text == "АКТИВНАЯ СТРАТЕГИЯ" && visual.ManualButton.Visibility == Visibility.Collapsed, "active card and no redundant activation button");
+                        var active = (MainWindow.Row)visual.ResultsGrid.Items[0];
+                        Assert(active.IsActive, "active strategy pinned first");
                         visual.PreviewActiveState(true); visual.UpdateLayout();
-                        Assert(!((MainWindow.Row)visual.ResultsGrid.SelectedItem).IsActive && ((MainWindow.Row)visual.ResultsGrid.Items[0]).IsActive, "browsing another strategy preserves active identity");
-                        Assert(visual.PowerStrategy == ((MainWindow.Row)visual.ResultsGrid.Items[0]).Name, "power remains tied to the strategy shown in the card");
-                        Assert(visual.BackToActiveButton.Visibility == Visibility.Visible && visual.CardCaption.Text == "АКТИВНАЯ СТРАТЕГИЯ" && visual.SelectedProfileText.Text.Contains(((MainWindow.Row)visual.ResultsGrid.SelectedItem).DisplayName), "top card stays active while selected profile changes below");
+                        var selectedName = ((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name;
+                        Assert(visual.PowerStrategy == active.Name && selectedName != active.Name, "browsing preserves active strategy");
+                        visual.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
+                        Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name == selectedName && visual.PowerStrategy == active.Name && visual.Width == 540, "switching to tiles preserves selection, connection and window width");
+                        Assert(visual.ViewModeButton.ToolTip.ToString() == "Показать списком", "tiles offer list alternative");
+                        visual.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
+                        var last = visual.ResultsGrid.Items[visual.ResultsGrid.Items.Count - 1];
+                        visual.ResultsGrid.ScrollIntoView(last); visual.UpdateLayout();
+                        var lastRow = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromItem(last);
+                        var end = lastRow.TranslatePoint(new Point(0, lastRow.ActualHeight), visual.ResultsGrid);
+                        Assert(end.Y <= visual.ResultsGrid.ActualHeight + 1 && end.Y > 0, "last strategy reachable by scrolling");
+                        Assert(!visual.CardCaption.IsVisible && !visual.SelectionStatus.IsVisible && !visual.CardSubtitle.IsVisible, "redundant captions hidden");
                         visual.BackToActiveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).IsActive, "return to active action");
-                        visual.Width = 700; visual.Height = 780;
-                        visual.SelectedExpander.IsOpen = true; visual.UpdateLayout();
-                        Assert(visual.ResultsGrid.ActualHeight >= 70, "compact window retains visible strategy rows with details open");
-                        var lastTile = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(visual.ResultsGrid.Items.Count - 1);
-                        Assert(lastTile.TranslatePoint(new Point(0, lastTile.ActualHeight), visual.ResultsGrid).Y <= visual.ResultsGrid.ActualHeight + 1, "all strategy tiles fit without scrolling");
-                        var headerAction = visual.AutoButton.TranslatePoint(new Point(), visual.StrategiesHeader);
-                        Assert(headerAction.Y >= 0 && headerAction.Y < visual.StrategiesHeader.ActualHeight, "automatic selection belongs to strategies heading");
-                        Assert(!visual.CardCaption.IsVisible && !visual.SelectionStatus.IsVisible && !visual.CardSubtitle.IsVisible, "redundant status captions hidden");
                         var expanded = visual.Height;
                         visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
-                        Assert(visual.Height < expanded && visual.ResultsGrid.Visibility == Visibility.Collapsed, "hiding strategies reduces window height");
-                        var compactHeader = visual.StrategiesHeader.TranslatePoint(new Point(0, visual.StrategiesHeader.ActualHeight), (UIElement)visual.Content);
-                        Assert(compactHeader.Y < ((FrameworkElement)visual.Content).ActualHeight - 10, "show strategies remains visible in compact mode");
-                        visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
-                        Assert(visual.ResultsGrid.Visibility == Visibility.Visible && visual.Height == expanded, "expanding restores strategies and window height");
-                        var actionPosition = visual.AutoButton.TranslatePoint(new Point(0, visual.AutoButton.ActualHeight), visual);
-                        Assert(actionPosition.Y < visual.ActualHeight - 20, "compact window keeps primary action inside client area");
+                        Assert(visual.Height < expanded && !visual.ResultsPanel.IsVisible, "collapse reduces height");
+                        var collapsedFooter = visual.UpdateBadge.TranslatePoint(new Point(0, visual.UpdateBadge.ActualHeight), (UIElement)visual.Content);
+                        Assert(collapsedFooter.Y <= ((FrameworkElement)visual.Content).ActualHeight - 8 && visual.StrategiesHeader.ActualHeight >= 30, "compact controls fit without clipping");
+                        visual.Pages.SelectedIndex = 1; visual.UpdateLayout();
+                        Assert(visual.Height >= 620 && visual.StartupBox.IsVisible, "settings expand collapsed window");
+                        Assert(visual.SaveButton.IsVisible && visual.SaveButton.TranslatePoint(new Point(0, visual.SaveButton.ActualHeight), visual).Y < visual.ActualHeight - 45, "settings save stays reachable without scrolling");
+                        visual.Pages.SelectedIndex = 0; visual.UpdateLayout();
+                        Assert(visual.Height < expanded && !visual.ResultsPanel.IsVisible, "home restores compact state");
+                        visual.PreviewUpdatesState(); visual.UpdateLayout();
+                        Assert(visual.AppUpdateBanner.IsVisible && visual.EngineUpdateBanner.IsVisible, "independent app and engine banners");
+                        Assert(visual.StrategiesHeader.TranslatePoint(new Point(0, visual.StrategiesHeader.ActualHeight), visual).Y < visual.ActualHeight - 50, "banners fit in compact mode");
+                        visual.DismissAppButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        Assert(!visual.AppUpdateBanner.IsVisible && visual.EngineUpdateBanner.IsVisible, "dismissal independent by update type");
+                        visual.PreviewUpdatesState(); Assert(!visual.AppUpdateBanner.IsVisible, "same dismissed release stays hidden");
+                        visual.PreviewUpdatesState("0.9.0"); Assert(visual.AppUpdateBanner.IsVisible, "new release reappears");
+                        visual.EngineNotice.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        Assert(visual.Pages.SelectedIndex == 2 && !visual.AppUpdateBanner.IsVisible, "engine banner opens updates without duplicated banner");
+                        visual.DismissEngineButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        visual.Pages.SelectedIndex = 0; visual.DismissAppButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        visual.Width = 500; visual.Height = 620; visual.UpdateLayout();
+                        Assert(visual.ResultsGrid.ActualHeight >= 120, "minimum window retains useful list viewport");
+                        var action = visual.AutoButton.TranslatePoint(new Point(visual.AutoButton.ActualWidth, visual.AutoButton.ActualHeight), visual);
+                        Assert(action.X < visual.ActualWidth - 12 && action.Y < visual.ActualHeight - 50, "actions fit minimum window");
                         visual.Pages.SelectedIndex = 2; visual.UpdateLayout();
-                        Assert(visual.AppCheckButton.IsVisible && visual.AppCheckButton.ActualWidth > 50, "app updates reachable in compact window");
+                        visual.AppInstallButton.BringIntoView(); visual.UpdateLayout();
+                        Assert(visual.AppInstallButton.ActualWidth <= visual.AppUpdateSection.ActualWidth - 30, "app installation button fits narrow update panel");
+                        visual.PreviewBusyState(); visual.UpdateLayout();
+                        Assert(visual.BusyPanel.IsVisible && visual.UpdateCancelButton.IsVisible, "update progress and cancel reachable outside home");
                     }
                     finally { visual.Close(); }
+                    var options = new Settings { StrategyView = "tiles", DismissedAppVersion = "0.9.0", DismissedEngineVersion = "1.11.0" };
+                    Store.Save(options); var restored = Store.Load();
+                    Assert(restored.StrategyView == "tiles" && restored.DismissedAppVersion == "0.9.0" && restored.DismissedEngineVersion == "1.11.0", "view and dismissed release preferences persist");
                 }
                 catch (Exception ex) { failure = ex; }
                 finally { window.ExitApp(); }
@@ -188,7 +221,7 @@ public static class SelfTest
             Store.Root = actualRoot;
             if (Path.GetDirectoryName(temp) == Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) && Path.GetFileName(temp).StartsWith("razret-ui-")) Directory.Delete(temp, true);
         }
-        Store.Write("ui-test.json", new { Passed = true, Checks = new[] { "Close hides to tray", "Restore shows existing window", "Settings, updates and home reachable", "Active row pinned and distinguished from selection", "Top card stays pinned while another profile is inspected", "Return to active action", "Explicit exit shuts down" }, NetworkChanged = false });
+        Store.Write("ui-test.json", new { Passed = true, Checks = new[] { "Tray, themes and navigation", "Narrow scrollable list and two-column tiles", "Selection and active strategy preserved across view changes", "Collapse and settings navigation", "App notification independent of engine checks", "Dismissals, new releases and update actions", "Update progress and cancel", "Persistent view and dismissal preferences" }, NetworkChanged = false });
     }
     public static async Task Update()
     {

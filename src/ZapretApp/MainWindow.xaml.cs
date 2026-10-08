@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Threading;
 using Microsoft.Win32;
 using System.Windows.Documents;
+using System.Windows.Media;
 
 namespace ZapretApp;
 
@@ -34,8 +35,7 @@ public partial class MainWindow : Window
     Row? cardProfile;
     internal string? PowerStrategy => cardProfile?.Name;
     bool loadingTheme = true;
-    double expandedHeight = 800;
-    double expandedWidth = 740;
+    double expandedHeight = 740;
 
     readonly Func<CancellationToken, Task<Release?>> latestAppRelease;
     public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
@@ -47,6 +47,7 @@ public partial class MainWindow : Window
         ShowStatisticsIdentity();
         loadingStatistics = false;
         Appearance.Apply(this, settings.Theme); Select(ThemeBox, settings.Theme); loadingTheme = false;
+        SourceInitialized += (_, _) => Appearance.Apply(this, settings.Theme);
         TrayBox.IsChecked = settings.CloseToTray;
         try { StartupBox.IsChecked = Startup.Enabled(); }
         catch (Exception ex) { StartupBox.IsChecked = settings.StartWithWindows; Footer.Text = "Не удалось прочитать автозапуск: " + ex.Message; }
@@ -66,10 +67,13 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException) { Store.Log("Не удалось прочитать прошлые результаты: " + ex.Message); }
         }
+        ApplyStrategyView();
         ApplyStrategiesVisibility(false);
+        AppVersionText.Text = AppUpdater.Version;
+        EngineVersionText.Text = Updater.Version;
         Refresh();
         if (settings.SetupComplete) { StatusTitle.Text = "Готов к подключению"; StatusDetail.Text = "Сохранённый профиль готов. Повторный подбор не нужен."; }
-        AdminButton.Visibility = Engine.Admin ? Visibility.Collapsed : Visibility.Visible;
+        AdminPanel.Visibility = AdminButton.Visibility = Engine.Admin ? Visibility.Collapsed : Visibility.Visible;
         Loaded += async (_, _) =>
         {
             if (preview) return;
@@ -135,28 +139,64 @@ public partial class MainWindow : Window
     void ApplyStrategiesVisibility(bool resize)
     {
         var hidden = settings.HideStrategies;
-        ResultsGrid.Visibility = StrategyActions.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
-        StrategiesToggleButton.Content = hidden ? "Показать" : "Скрыть";
-        if (hidden)
-        {
-            if (resize) { expandedHeight = Height; expandedWidth = Width; }
-            MinHeight = 420; MinWidth = 540; Width = 580;
-            Height = operation == null ? 430 : 480;
-        }
-        else
-        {
-            MinHeight = 780; MinWidth = 700;
-            if (resize) { Height = Math.Max(780, expandedHeight); Width = Math.Max(700, expandedWidth); }
-        }
-
+        ResultsPanel.Visibility = ResultsGrid.Visibility = StrategyActions.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        ViewModeButton.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        StrategiesChevron.RenderTransform = new RotateTransform(hidden ? 180 : 0);
+        StrategiesToggleButton.ToolTip = hidden ? "Показать стратегии" : "Свернуть стратегии";
+        System.Windows.Automation.AutomationProperties.SetName(StrategiesToggleButton, (string)StrategiesToggleButton.ToolTip);
+        ResizeForContent();
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(ResizeForContent));
     }
     void ToggleStrategiesVisibility(object sender, RoutedEventArgs e)
     {
         SelectedExpander.IsOpen = false;
+        if (!settings.HideStrategies && WindowState == WindowState.Normal) expandedHeight = Math.Max(620, Height - NoticeHeight);
         settings.HideStrategies = !settings.HideStrategies;
         ApplyStrategiesVisibility(true);
         if (!preview && !quiet) Store.Save(settings);
     }
+    double NoticeHeight => (AppUpdateBanner.Visibility == Visibility.Visible ? 76 : 0) + (EngineUpdateBanner.Visibility == Visibility.Visible ? 76 : 0);
+    void ResizeForContent()
+    {
+        if (settings == null || Pages == null) return;
+        bool compact = settings.HideStrategies && Pages.SelectedIndex == 0;
+        double available = SystemParameters.WorkArea.Height;
+        Pages.MinHeight = compact ? 48 : Pages.SelectedIndex == 0 ? 160 : 240;
+        MinHeight = Math.Min(available, compact ? 360 : 620);
+        MaxHeight = compact ? available : double.PositiveInfinity;
+        if (WindowState == WindowState.Normal)
+        {
+            SizeToContent = compact ? SizeToContent.Height : SizeToContent.Manual;
+            if (!compact) Height = Math.Min(available, expandedHeight + NoticeHeight);
+        }
+    }
+    void ApplyStrategyView()
+    {
+        bool tiles = settings.StrategyView == "tiles";
+        ResultsGrid.ItemsPanel = (ItemsPanelTemplate)Resources[tiles ? "StrategyTilePanel" : "StrategyListPanel"];
+        ResultsGrid.ItemTemplate = (DataTemplate)Resources[tiles ? "StrategyTileTemplate" : "StrategyListTemplate"];
+        ResultsGrid.ItemContainerStyle = (Style)Resources[tiles ? "StrategyTile" : "StrategyRow"];
+        ViewModeIcon.Data = (Geometry)Resources[tiles ? "IconList" : "IconGrid"];
+        ViewModeButton.ToolTip = tiles ? "Показать списком" : "Показать плашками";
+        System.Windows.Automation.AutomationProperties.SetName(ViewModeButton, (string)ViewModeButton.ToolTip);
+    }
+    void ToggleStrategyView(object sender, RoutedEventArgs e)
+    {
+        SelectedExpander.IsOpen = false;
+        settings.StrategyView = settings.StrategyView == "tiles" ? "list" : "tiles";
+        ApplyStrategyView();
+        if (ResultsGrid.SelectedItem is Row row) Dispatcher.BeginInvoke(new Action(() => ResultsGrid.ScrollIntoView(row)));
+        if (!preview && !quiet) Store.Save(settings);
+    }
+    void PageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (e.Source != Pages || settings == null) return;
+        HelpPopup.IsOpen = SelectedExpander.IsOpen = false;
+        ShowUpdateNotices();
+        UpdateCancelButton.Visibility = operation != null && Pages.SelectedIndex != 0 ? Visibility.Visible : Visibility.Collapsed;
+        ResizeForContent();
+    }
+    void SettingsClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 1;
     void Refresh()
     {
         VersionLabel.Text = "zapret " + Updater.Version;
@@ -168,8 +208,8 @@ public partial class MainWindow : Window
         ResultsGrid.ItemsSource = rows;
         ResultsGrid.SelectedItem = rows.FirstOrDefault(r => r.Name == selected) ?? rows.FirstOrDefault();
         AutoButton.Content = "Подобрать";
-        AutoButton.SetResourceReference(Control.BackgroundProperty, settings.SetupComplete ? "Button" : "Accent");
-        AutoButton.SetResourceReference(Control.ForegroundProperty, settings.SetupComplete ? "Text" : "AccentText");
+        AutoButton.SetResourceReference(Control.BackgroundProperty, "Accent");
+        AutoButton.SetResourceReference(Control.ForegroundProperty, "AccentText");
         UpdateActive();
 
     }
@@ -189,6 +229,15 @@ public partial class MainWindow : Window
             }
         }
         public string TileServices => $"D {Discord}   Y {Youtube}";
+        public string PassedChecks
+        {
+            get
+            {
+                var groups = Result?.Probes.GroupBy(p => p.Service).ToList();
+                return groups?.Count > 0 ? $"{groups.Count(g => g.All(p => p.Ok))}/{groups.Count}" : "—";
+            }
+        }
+        public string CompactResult => Result == null ? "Не проверена" : $"{PassedChecks} · {Response}";
         public string TileTip => $"{DisplayName}\nDiscord: {Discord} · YouTube: {Youtube}\nPing: {Ping} · Отклик: {Response}\n" + (TestState switch { "good" => "Все проверки пройдены; ping до 150 мс, отклик до 1500 мс", "warning" => "Часть проверок не прошла или задержка повышена", "bad" => "Большинство проверок не прошло", _ => "Ещё не проверялась" }) + (IsActive ? "\nВключена сейчас" : "");
         public static string ShortName(string name) => name.Replace("general (", "").Replace(").bat", "").Replace("general.bat", "Основная");
         public static Row From(string name, Result? result, string? active, string? saved)
@@ -236,6 +285,9 @@ public partial class MainWindow : Window
         CardCaption.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardMuted" : "Muted");
         SelectionTitle.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardText" : "Text");
         SelectionTitle.Text = row.DisplayName;
+        ConnectionDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, active ? "Good" : "Unknown");
+        ToggleButton.SetResourceReference(Control.BackgroundProperty, active ? "Button" : "Accent");
+        ToggleButton.SetResourceReference(Control.ForegroundProperty, active ? "Text" : "AccentText");
         if (!settings.SetupComplete && !active && results.Count == 0)
         {
             CardCaption.Text = "ДОБРО ПОЖАЛОВАТЬ";
@@ -275,13 +327,13 @@ public partial class MainWindow : Window
         ResultsGrid.ItemsSource = rows;
         ResultsGrid.SelectedItem = otherSelected ? rows.First(r => !r.IsActive) : rows.First(r => r.IsActive);
         StatusTitle.Text = "Соединение готово"; StatusDetail.Text = "Можно свернуть окно — обход останется в трее.";
-        ModeLabel.Text = ""; ToggleButton.Content = "Выключить"; AdminButton.Visibility = Visibility.Collapsed;
+        ModeLabel.Text = ""; ToggleButton.Content = "Отключить"; AdminPanel.Visibility = AdminButton.Visibility = Visibility.Collapsed;
         Footer.Text = "Предпросмотр интерфейса · движок не запущен";
     }
     internal void PreviewBusyState()
     {
         if (!preview) throw new InvalidOperationException("Preview only");
-        SetBusy(true); StatusDetail.Text = "19 из 22 · general (SIMPLE FAKE ALT).bat";
+        SetBusy(true); StatusDetail.Text = "19 из 22 · SIMPLE FAKE ALT";
         Progress.Value = 86; Footer.Text = "";
     }
     void UpdateActive()
@@ -308,15 +360,21 @@ public partial class MainWindow : Window
     async Task Work(Func<CancellationToken, Task> action, string scope = "general", string? failureStrategy = null, bool recordFailure = true)
     {
         if (operation != null) return;
+        StatusDetail.Text = scope switch { "app_install" => "Обновляем приложение…", "engine_install" => "Обновляем движок обхода…", "strategy_test" => "Готовим проверку стратегий…", "strategy_launch" => "Подключаемся…", _ => "Выполняем операцию…" };
+        Progress.Value = 0;
+        Progress.IsIndeterminate = scope != "strategy_test";
         operation = new(); SetBusy(true);
         try { await action(operation.Token); }
         catch (OperationCanceledException) { if (!engine.Running) StatusTitle.Text = "Проверка остановлена"; Footer.Text = "Операция отменена. Предыдущее состояние восстановлено, если оно было активно."; }
         catch (Exception ex) { if (recordFailure) statistics.Failure(ex, failureStrategy ?? settings.Strategy, scope); if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
-        finally { operation.Dispose(); operation = null; SetBusy(false); Progress.IsIndeterminate = false; Progress.Visibility = Visibility.Collapsed; if (allowExit) _ = Dispatcher.BeginInvoke(new Action(Close)); Refresh(); wasRunning = engine.Running; ToggleButton.Content = engine.Running ? "Выключить" : "Включить"; UpdateActive(); _ = statistics.Flush(lifetime.Token); }
+        finally { operation.Dispose(); operation = null; SetBusy(false); Progress.IsIndeterminate = false; Progress.Visibility = Visibility.Collapsed; if (allowExit) _ = Dispatcher.BeginInvoke(new Action(Close)); Refresh(); wasRunning = engine.Running; ToggleButton.Content = engine.Running ? "Отключить" : "Включить"; UpdateActive(); _ = statistics.Flush(lifetime.Token); }
     }
     void SetBusy(bool busy)
     {
-        if (settings.HideStrategies) Height = busy ? 480 : 430;
+        BusyPanel.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
+        UpdateCancelButton.Visibility = busy && Pages.SelectedIndex != 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (busy && string.IsNullOrWhiteSpace(StatusDetail.Text)) StatusDetail.Text = "Выполняем операцию…";
+        ResizeForContent();
         AppCheckButton.IsEnabled = !busy;
         AppInstallButton.IsEnabled = !busy && appRelease != null;
         foreach (var button in new[] { AutoButton, ToggleButton, ManualButton, SingleButton, SaveButton, CheckButton, DiagnoseButton, AdminButton }) button.IsEnabled = !busy;
@@ -327,7 +385,7 @@ public partial class MainWindow : Window
     void Connected()
     {
         StatusTitle.Text = "Соединение готово"; StatusDetail.Text = settings.CloseToTray ? "Можно свернуть окно — обход останется в трее." : "Обход работает, пока приложение открыто.";
-        ToggleButton.Content = "Выключить"; Footer.Text = ""; wasRunning = true; Refresh(); BackToActiveClick(this, new RoutedEventArgs());
+        ToggleButton.Content = "Отключить"; Footer.Text = ""; wasRunning = true; Refresh(); BackToActiveClick(this, new RoutedEventArgs());
     }
     async Task Diagnose(CancellationToken ct)
     {
@@ -360,9 +418,7 @@ public partial class MainWindow : Window
                 : appRelease == null ? "Razret " + AppUpdater.Version + " — новых выпусков нет."
                 : "Доступен Razret " + appRelease.Version + ". Настройки и выбранная стратегия сохранятся. После установки приложение перезапустится.";
             AppReleaseNotes.Text = appRelease?.Notes ?? "";
-            AppNotice.Visibility = appRelease != null ? Visibility.Visible : Visibility.Collapsed;
-            AppNotice.Content = "Обновить Razret";
-            AppNotice.ToolTip = appRelease == null ? null : "Доступен Razret " + appRelease.Version + ". Нажмите, чтобы посмотреть изменения и установить.";
+            ShowUpdateNotices();
             if (appRelease != null && notifiedAppVersion != appRelease.Version)
             {
                 notifiedAppVersion = appRelease.Version;
@@ -375,7 +431,49 @@ public partial class MainWindow : Window
         finally { appCheckRunning = false; AppCheckButton.IsEnabled = operation == null; AppInstallButton.IsEnabled = operation == null && appRelease != null; }
     }
     async void AppCheckClick(object sender, RoutedEventArgs e) => await Work(CheckAppUpdate);
-    void AppNoticeClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 2;
+    void OpenUpdateSection(FrameworkElement section)
+    {
+        Pages.SelectedIndex = 2;
+        Dispatcher.BeginInvoke(new Action(() => section.BringIntoView()));
+    }
+    void AppNoticeClick(object sender, RoutedEventArgs e) => OpenUpdateSection(AppUpdateSection);
+    void EngineNoticeClick(object sender, RoutedEventArgs e) => OpenUpdateSection(EngineUpdateSection);
+    void ShowUpdateNotices()
+    {
+        if (settings == null || AppUpdateBanner == null) return;
+        bool home = Pages.SelectedIndex == 0;
+        bool appAvailable = appRelease != null;
+        bool engineAvailable = release != null && release.Version != Updater.Version;
+        AppBannerTitle.Text = appAvailable ? "Доступен Razret " + appRelease!.Version : "";
+        EngineBannerTitle.Text = engineAvailable ? "Доступен zapret " + release!.Version : "";
+        AppUpdateBanner.Visibility = home && appAvailable && settings.DismissedAppVersion != appRelease!.Version ? Visibility.Visible : Visibility.Collapsed;
+        EngineUpdateBanner.Visibility = home && engineAvailable && settings.DismissedEngineVersion != release!.Version && settings.PostponedVersion != release.Version ? Visibility.Visible : Visibility.Collapsed;
+        UpdateDot.Visibility = appAvailable || engineAvailable ? Visibility.Visible : Visibility.Collapsed;
+        UpdateBadge.ToolTip = appAvailable || engineAvailable ? "Доступны обновления. Посмотреть изменения и установить." : "Обновления приложения и движка";
+        ResizeForContent();
+    }
+    void DismissAppUpdate(object sender, RoutedEventArgs e)
+    {
+        settings.DismissedAppVersion = appRelease?.Version;
+        if (!preview && !quiet) Store.Save(settings);
+        ShowUpdateNotices();
+    }
+    void DismissEngineUpdate(object sender, RoutedEventArgs e)
+    {
+        settings.DismissedEngineVersion = release?.Version;
+        if (!preview && !quiet) Store.Save(settings);
+        ShowUpdateNotices();
+    }
+    internal void PreviewUpdatesState(string appVersion = "0.8.0", string engineVersion = "1.11.0")
+    {
+        if (!preview) throw new InvalidOperationException("Preview only");
+        appRelease = new(appVersion, "https://example.invalid/app.zip", "", 1, "Новый интерфейс и улучшения стабильности.");
+        release = new(engineVersion, "https://example.invalid/engine.zip", "", 1, "Обновлены стратегии обхода.");
+        AppUpdateText.Text = "Доступен Razret " + appVersion + ". Настройки сохранятся. После установки приложение перезапустится.";
+        AppReleaseNotes.Text = appRelease.Notes;
+        AppInstallButton.IsEnabled = true;
+        ShowRelease();
+    }
     async void AppInstallClick(object sender, RoutedEventArgs e) => await Work(async ct =>
     {
         if (appRelease == null) return;
@@ -479,7 +577,7 @@ public partial class MainWindow : Window
             if (filtersChanged) { engine.Stop(); settings.SetupComplete = false; results.Clear(); StatusTitle.Text = "Параметры изменены"; }
             settings.GameMode = game; settings.Ipset = ipset; settings.AutoConnect = AutoConnectBox.IsChecked == true; settings.CheckUpdates = UpdatesBox.IsChecked == true;
             settings.StartWithWindows = startup; settings.CloseToTray = TrayBox.IsChecked == true;
-            Store.Save(settings); Refresh(); ToggleButton.Content = engine.Running ? "Выключить" : "Включить";
+            Store.Save(settings); Refresh(); ToggleButton.Content = engine.Running ? "Отключить" : "Включить";
             Footer.Text = filtersChanged ? "Настройки сохранены. Подберите стратегию заново." : "Настройки сохранены" + (startup ? " · обход включится при входе в Windows" : "");
         }
         catch (Exception ex) { MessageBox.Show(this, ex.Message, "Настройки Razret", MessageBoxButton.OK, MessageBoxImage.Information); }
@@ -487,6 +585,7 @@ public partial class MainWindow : Window
     void ShowRelease()
     {
         if (release == null) return;
+        EngineVersionText.Text = Updater.Version;
         bool available = release.Version != Updater.Version;
         UpdateBadgeText.Text = available ? (settings.PostponedVersion == release.Version ? "Доступна " : "Новая ") + release.Version : "Движок " + release.Version;
         UpdateBadge.ToolTip = available ? "Доступно обновление движка обхода. Открыть изменения и установку." : "Движок обхода актуален. Открыть обновления.";
@@ -494,8 +593,9 @@ public partial class MainWindow : Window
         UpdateText.Text = available ? $"Доступна версия {release.Version}. Сохраним ваши списки и предыдущую версию." : $"Установлена актуальная версия {release.Version}.";
         ReleaseNotes.Text = ReleaseNotesRu.Summarize(release.Notes);
         LaterButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
-        LaterButton.Content = "Остаться на " + Updater.Version;
+        LaterButton.Content = "Позже";
         UpdateButton.IsEnabled = operation == null && available;
+        ShowUpdateNotices();
     }
     async Task CheckUpdate(CancellationToken ct = default)
     {
@@ -508,9 +608,10 @@ public partial class MainWindow : Window
     {
         UpdateBadgeText.Text = "Проверяем…";
         try { release = await Updater.Latest(ct); ShowRelease(); }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex) { UpdateBadgeText.Text = "Повторить проверку"; UpdateText.Text = "Проверка недоступна. Установленный комплект сохранён. " + ex.Message; }
     }
-    async void UpdateBadgeClick(object sender, RoutedEventArgs e) { Pages.SelectedIndex = 2; if (release == null && operation == null) await CheckUpdate(); }
+    void UpdateBadgeClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 2;
     void LaterClick(object sender, RoutedEventArgs e)
     {
         if (release == null) return;
