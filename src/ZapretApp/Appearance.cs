@@ -23,6 +23,8 @@ public static class Appearance
             ["Accent"] = ("#2BA987", "#187F63"), ["AccentText"] = ("#FFFFFF", "#FFFFFF"),
             ["RowHover"] = ("#23383D", "#F5F7FB"), ["RowSelected"] = ("#304750", "#E4EEE9"),
             ["RowActive"] = ("#203C33", "#EAF7EF"), ["RowActiveText"] = ("#96E5B5", "#237046"),
+            ["FailedSurface"] = ("#33282C", "#FCF0F0"), ["FailedBorder"] = ("#67434A", "#DDB6BC"),
+            ["WarningSurface"] = ("#3B3023", "#FFF6E7"), ["WarningBorder"] = ("#87612F", "#DCBF8E"),
             ["Card"] = ("#19282C", "#FFFFFF"), ["CardActive"] = ("#163F34", "#DFF2E7"),
             ["CardActiveBorder"] = ("#36765E", "#B7DCC7"), ["CardText"] = ("#F0FBF4", "#1A4730"),
             ["CardMuted"] = ("#ADC2B5", "#567261"), ["Badge"] = ("#2C4F3D", "#D7EFDF"),

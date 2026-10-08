@@ -24,8 +24,10 @@ public sealed class Settings
     public string Theme { get; set; } = "dark";
     public bool ShareStatistics { get; set; }
     public bool StatisticsConsentAsked { get; set; }
+    public int StatisticsConsentVersion { get; set; }
+    public bool HideStrategies { get; set; }
 }
-public record Probe(string Service, bool Ok, double Milliseconds, string Detail = "", double? Ping = null);
+public record Probe(string Service, bool Ok, double Milliseconds, string Detail = "", double? Ping = null, string? Code = null);
 public record Result(string Name, List<Probe> Probes)
 {
     public int Passed => Probes.Count(x => x.Ok);
@@ -134,6 +136,10 @@ public static class Strategies
     }
 }
 
+public sealed class EngineFailure(int exitCode) : IOException($"Движок завершился с кодом {exitCode}. Подробности в журнале.")
+{
+    public int ExitCode { get; } = exitCode;
+}
 public sealed class Engine : IDisposable
 {
     Process? child;
@@ -167,7 +173,7 @@ public sealed class Engine : IDisposable
         try
         {
             await Task.Delay(1200, ct);
-            if (child.HasExited) throw new IOException($"Движок завершился с кодом {child.ExitCode}. Подробности в журнале.");
+            if (child.HasExited) throw new EngineFailure(child.ExitCode);
             Active = name;
         }
         catch { Stop(); throw; }
@@ -244,11 +250,11 @@ public static class Checks
             double elapsed = sw.Elapsed.TotalMilliseconds;
             double? pingMs = null;
             try { using var ping = new Ping(); var reply = await ping.SendPingAsync(new Uri(url).Host, TimeSpan.FromMilliseconds(700), cancellationToken: ct); if (reply.Status == IPStatus.Success) pingMs = reply.RoundtripTime; } catch (PingException) { }
-            return new(name, ok, elapsed, $"HTTP {(int)response.StatusCode}", pingMs);
+            return new(name, ok, elapsed, $"HTTP {(int)response.StatusCode}", pingMs, ok ? null : response.IsSuccessStatusCode ? "response:invalid" : "http:" + (int)response.StatusCode);
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return new(name, false, 7000, "Тайм-аут"); }
-        catch (HttpRequestException ex) { return new(name, false, sw.Elapsed.TotalMilliseconds, ex.HttpRequestError.ToString()); }
-        catch (IOException) { return new(name, false, sw.Elapsed.TotalMilliseconds, "Ошибка чтения ответа"); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return new(name, false, 7000, "Тайм-аут", Code: "timeout"); }
+        catch (HttpRequestException ex) { return new(name, false, sw.Elapsed.TotalMilliseconds, ex.HttpRequestError.ToString(), Code: Statistics.TechnicalCause(ex)); }
+        catch (IOException) { return new(name, false, sw.Elapsed.TotalMilliseconds, "Ошибка чтения ответа", Code: "read:failed"); }
     }
     static async Task<Probe> Gateway(CancellationToken ct)
     {
@@ -260,10 +266,10 @@ public static class Checks
         {
             await socket.ConnectAsync(new Uri("wss://gateway.discord.gg/?v=10&encoding=json"), timeout.Token);
             bool hello = await ReadHello(socket, timeout.Token);
-            return new("Discord Gateway", hello, sw.Elapsed.TotalMilliseconds, hello ? "WebSocket Hello" : "Нет Hello");
+            return new("Discord Gateway", hello, sw.Elapsed.TotalMilliseconds, hello ? "WebSocket Hello" : "Нет Hello", Code: hello ? null : "gateway:no_hello");
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return new("Discord Gateway", false, 7000, "Тайм-аут"); }
-        catch (WebSocketException) { return new("Discord Gateway", false, sw.Elapsed.TotalMilliseconds, "Ошибка WebSocket"); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return new("Discord Gateway", false, 7000, "Тайм-аут", Code: "timeout"); }
+        catch (WebSocketException ex) { return new("Discord Gateway", false, sw.Elapsed.TotalMilliseconds, "Ошибка WebSocket", Code: Statistics.TechnicalCause(ex)); }
     }
     public static IEnumerable<Result> Rank(IEnumerable<Result> results) => results.OrderByDescending(r => r.Complete).ThenByDescending(r => r.Passed).ThenBy(r => r.Delay).ThenBy(r => r.Probes.Where(p => p.Ping.HasValue).Select(p => p.Ping!.Value).DefaultIfEmpty(double.PositiveInfinity).Average()).ThenBy(r => r.Name, StringComparer.Ordinal);
 }

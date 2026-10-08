@@ -1,4 +1,4 @@
-import { put, get, list, del, BlobError } from '@vercel/blob';
+import { put, get, list, del, BlobError, BlobNotFoundError } from '@vercel/blob';
 import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -59,4 +59,26 @@ export async function purgeExpired() {
     if (expired.length) await del(expired.map(b=>b.url));
     cursor = page.hasMore ? page.cursor : undefined;
   } while (cursor);
+  cursor = undefined;
+  do {
+    const page = await list({prefix:'labels/',limit:1000,cursor});
+    const expired=page.blobs.filter(b=>new Date(b.uploadedAt).toISOString().slice(0,10)<cutoff);
+    if(expired.length)await del(expired.map(b=>b.url));
+    cursor=page.hasMore?page.cursor:undefined;
+  }while(cursor);
+}
+export async function saveLabel(label) {
+  const name=`labels/${label.TesterId}.json`;
+  if (local()) { const file=path.join(process.env.RAZRET_LOCAL_DATA,name);await mkdir(path.dirname(file),{recursive:true});await writeFile(file,JSON.stringify(label)); }
+  else await put(name,JSON.stringify(label),{access:'private',addRandomSuffix:false,allowOverwrite:true,contentType:'application/json'});
+}
+export async function readLabels(ids) {
+  const labels={};
+  for(let i=0;i<ids.length;i+=10)await Promise.all(ids.slice(i,i+10).map(async id=>{
+    const name=`labels/${id}.json`;let data;
+    if(local()) { try{data=JSON.parse(await readFile(path.join(process.env.RAZRET_LOCAL_DATA,name),'utf8'));}catch(e){if(e.code!=='ENOENT')throw e;} }
+    else { try { const result=await get(name,{access:'private',useCache:false});if(result?.statusCode===200)data=JSON.parse(await new Response(result.stream).text()); } catch(e) { if(!(e instanceof BlobNotFoundError))throw e; } }
+    if(data)labels[id]=data.Name;
+  }));
+  return labels;
 }

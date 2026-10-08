@@ -18,6 +18,15 @@ test('protocol rejects identifiers, precise times, raw messages, paths and inval
 test('dashboard summarizes outcomes without distinct-user counts',()=>{
   const data=summarize([validateReport(report())]);assert.equal(data.tests,2);assert.equal(data.passed,2);assert.equal(data.strategies[0].tests,2);assert.equal('users' in data,false);
 });
+test('v2 groups random tester IDs without linking legacy reports or leaking causes',()=>{
+  const first={...report(),Schema:2,TesterId:randomUUID()},second={...report(),Schema:2,TesterId:randomUUID()};
+  first.Metrics.push({Kind:'error',Outcome:'failure',Error:'network',Scope:'strategy_test',Cause:'socket:10061',Count:1});
+  second.Metrics[0].Outcome='failure';
+  const data=summarize([validateReport(first),validateReport(second),validateReport(report())]);
+  assert.equal(data.testers.length,2);assert.equal(data.anonymousReports,1);
+  assert.equal(data.testers.find(t=>t.id===first.TesterId).errors,1);assert.equal(data.testers.find(t=>t.id===second.TesterId).errors,0);
+  first.Metrics[1].Cause='private-host.example';assert.throws(()=>validateReport(first));
+});
 test('collection is idempotent and dashboard requires authenticated session',async()=>{
   const root=await mkdtemp(path.join(os.tmpdir(),'razret-stats-'));process.env.RAZRET_LOCAL_DATA=root;
   process.env.ADMIN_PASSWORD_HASH=createHash('sha256').update('test-password').digest('hex');process.env.SESSION_SECRET='test-secret-'.repeat(5);
@@ -33,5 +42,10 @@ test('collection is idempotent and dashboard requires authenticated session',asy
     const summary=await request('summary',{headers:{Cookie:cookie}});assert.equal(summary.status,200);const data=await summary.json();assert.equal(data.reports,1);assert.equal(data.tests,2);
     assert.equal((await request('logout',{method:'POST',headers:{Cookie:cookie}})).status,200);
     assert.equal((await request('retention')).status,401);
+    const tester={...report(),Schema:2,TesterId:randomUUID()};
+    assert.equal((await request('collect',{method:'POST',body:JSON.stringify(tester)})).status,202);
+    assert.equal((await request('tester-label',{method:'POST',body:JSON.stringify({TesterId:tester.TesterId,Name:'QA tester'})})).status,401);
+    assert.equal((await request('tester-label',{method:'POST',headers:{Cookie:cookie},body:JSON.stringify({TesterId:tester.TesterId,Name:'QA tester'})})).status,200);
+    const labeled=await (await request('summary',{headers:{Cookie:cookie}})).json();assert.equal(labeled.testers[0].name,'QA tester');
   }finally{await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});delete process.env.RAZRET_LOCAL_DATA;}
 });

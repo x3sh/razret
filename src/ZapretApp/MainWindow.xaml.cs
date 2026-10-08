@@ -34,13 +34,17 @@ public partial class MainWindow : Window
     Row? cardProfile;
     internal string? PowerStrategy => cardProfile?.Name;
     bool loadingTheme = true;
+    double expandedHeight = 800;
+    double expandedWidth = 740;
+
     readonly Func<CancellationToken, Task<Release?>> latestAppRelease;
     public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
     {
         this.latestAppRelease = latestAppRelease ?? AppUpdater.Latest;
         InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; SelectedExpander.IsOpen = false; } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
-        statistics = new(settings.ShareStatistics, preview || quiet);
-        StatisticsBox.IsChecked = settings.ShareStatistics;
+        statistics = new(settings.ShareStatistics && settings.StatisticsConsentVersion >= 2, preview || quiet);
+        StatisticsBox.IsChecked = settings.ShareStatistics && settings.StatisticsConsentVersion >= 2;
+        ShowStatisticsIdentity();
         loadingStatistics = false;
         Appearance.Apply(this, settings.Theme); Select(ThemeBox, settings.Theme); loadingTheme = false;
         TrayBox.IsChecked = settings.CloseToTray;
@@ -62,29 +66,19 @@ public partial class MainWindow : Window
             }
             catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException) { Store.Log("Не удалось прочитать прошлые результаты: " + ex.Message); }
         }
-        ResultsGrid.SizeChanged += (_, _) =>
-        {
-            double metricsWidth = ResultsGrid.Columns.Skip(1).Sum(column => column.Width.Value);
-            ResultsGrid.Columns[0].Width = Math.Max(150, ResultsGrid.ActualWidth - metricsWidth - 24);
-        };
+        ApplyStrategiesVisibility(false);
         Refresh();
         if (settings.SetupComplete) { StatusTitle.Text = "Готов к подключению"; StatusDetail.Text = "Сохранённый профиль готов. Повторный подбор не нужен."; }
         AdminButton.Visibility = Engine.Admin ? Visibility.Collapsed : Visibility.Visible;
         Loaded += async (_, _) =>
         {
             if (preview) return;
-            if (!quiet && Statistics.Configured && !settings.StatisticsConsentAsked)
-            {
-                settings.ShareStatistics = MessageBox.Show(this,
-                    "Помочь улучшить Razret?\n\nОтправлять сводные результаты проверок стратегий, категории технических ошибок и итоги обновлений. Без истории включений, точного времени действий, идентификатора устройства, переписки и содержимого трафика.\n\nОтправку можно выключить в настройках в любой момент.",
-                    "Статистика качества", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
-                settings.StatisticsConsentAsked = true; Store.Save(settings);
-                StatisticsBox.IsChecked = settings.ShareStatistics; statistics.SetEnabled(settings.ShareStatistics);
-            }
+            if (!quiet && Statistics.Configured && (!settings.StatisticsConsentAsked || settings.ShareStatistics && settings.StatisticsConsentVersion < 2))
+                ApplyStatisticsConsent(AskStatisticsConsent());
             ReadUpdateReceipt();
             if (startup) Hide();
             if (settings.SetupComplete && (settings.AutoConnect || startup) && settings.Strategy != null && Engine.Admin)
-                await Work(async ct => { await engine.Start(settings.Strategy, settings, ct); Connected(); });
+                await Work(async ct => { await engine.Start(settings.Strategy, settings, ct); Connected(); }, "strategy_launch");
             else if (settings.SetupComplete && !Engine.Admin) Footer.Text = "Для включения обхода нажмите «Права администратора».";
             await Task.WhenAll(CheckAppUpdate(lifetime.Token), settings.CheckUpdates ? CheckUpdate() : Task.CompletedTask);
         };
@@ -114,11 +108,55 @@ public partial class MainWindow : Window
     void StatisticsChanged(object sender, RoutedEventArgs e)
     {
         if (loadingStatistics) return;
-        settings.ShareStatistics = StatisticsBox.IsChecked == true;
-        settings.StatisticsConsentAsked = true;
-        Store.Save(settings); statistics.SetEnabled(settings.ShareStatistics && !preview && !quiet);
+        var value = StatisticsBox.IsChecked == true;
+        if (value && settings.StatisticsConsentVersion < 2 && !preview && !quiet) value = AskStatisticsConsent();
+        ApplyStatisticsConsent(value);
+    }
+    bool AskStatisticsConsent() => MessageBox.Show(this,
+        "Помочь улучшить Razret?\n\nОтправлять результаты проверок стратегий, технические коды ошибок и итоги обновлений. Случайный постоянный код свяжет отчёты этой установки, чтобы разработчик мог разобраться с вашей проблемой. Его можно сообщить разработчику.\n\nБез истории включений, точного времени действий, имени компьютера, журналов и содержимого трафика. Отправку можно выключить в любой момент; код и неотправленные отчёты удалятся.",
+        "Статистика качества", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+    void ApplyStatisticsConsent(bool value)
+    {
+        settings.ShareStatistics = value; settings.StatisticsConsentAsked = true; settings.StatisticsConsentVersion = 2;
+        Store.Save(settings); statistics.SetEnabled(value && !preview && !quiet);
+        loadingStatistics = true; StatisticsBox.IsChecked = value; loadingStatistics = false;
+        ShowStatisticsIdentity();
+    }
+    void ShowStatisticsIdentity()
+    {
+        StatisticsIdentityPanel.Visibility = statistics.SupportCode == null ? Visibility.Collapsed : Visibility.Visible;
+        StatisticsCode.Text = statistics.SupportCode ?? "";
+    }
+    void CopyStatisticsCode(object sender, RoutedEventArgs e)
+    {
+        if (statistics.SupportCode is string code) { Clipboard.SetText(code); Footer.Text = "Код тестировщика скопирован."; }
     }
     static void Select(ComboBox box, string tag) => box.SelectedItem = box.Items.Cast<ComboBoxItem>().First(x => (string)x.Tag == tag);
+    void ApplyStrategiesVisibility(bool resize)
+    {
+        var hidden = settings.HideStrategies;
+        ResultsGrid.Visibility = StrategyActions.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        StrategiesToggleButton.Content = hidden ? "Показать" : "Скрыть";
+        if (hidden)
+        {
+            if (resize) { expandedHeight = Height; expandedWidth = Width; }
+            MinHeight = 420; MinWidth = 540; Width = 580;
+            Height = operation == null ? 430 : 480;
+        }
+        else
+        {
+            MinHeight = 780; MinWidth = 700;
+            if (resize) { Height = Math.Max(780, expandedHeight); Width = Math.Max(700, expandedWidth); }
+        }
+
+    }
+    void ToggleStrategiesVisibility(object sender, RoutedEventArgs e)
+    {
+        SelectedExpander.IsOpen = false;
+        settings.HideStrategies = !settings.HideStrategies;
+        ApplyStrategiesVisibility(true);
+        if (!preview && !quiet) Store.Save(settings);
+    }
     void Refresh()
     {
         VersionLabel.Text = "zapret " + Updater.Version;
@@ -129,14 +167,29 @@ public partial class MainWindow : Window
         rows = rows.OrderByDescending(r => r.IsActive).ToList();
         ResultsGrid.ItemsSource = rows;
         ResultsGrid.SelectedItem = rows.FirstOrDefault(r => r.Name == selected) ?? rows.FirstOrDefault();
-        AutoButton.Content = "Подобрать автоматически";
+        AutoButton.Content = "Подобрать";
         AutoButton.SetResourceReference(Control.BackgroundProperty, settings.SetupComplete ? "Button" : "Accent");
         AutoButton.SetResourceReference(Control.ForegroundProperty, settings.SetupComplete ? "Text" : "AccentText");
         UpdateActive();
+
     }
     public record Row(string Name, string DisplayName, string Marker, string Discord, string Youtube, string Ping, string Response, Result? Result)
     {
         public bool IsActive => Marker == "● активна";
+        public string TestState
+        {
+            get
+            {
+                if (Result == null) return "unknown";
+                var groups = Result.Probes.GroupBy(p => p.Service).ToList();
+                int passed = groups.Count(g => g.All(p => p.Ok));
+                if (groups.Count == 0 || passed * 2 < groups.Count) return "bad";
+                var pings = Result.Probes.Where(p => p.Ping.HasValue).Select(p => p.Ping!.Value).ToArray();
+                return Result.Complete && Result.Delay <= 1500 && (pings.Length == 0 || pings.Average() <= 150) ? "good" : "warning";
+            }
+        }
+        public string TileServices => $"D {Discord}   Y {Youtube}";
+        public string TileTip => $"{DisplayName}\nDiscord: {Discord} · YouTube: {Youtube}\nPing: {Ping} · Отклик: {Response}\n" + (TestState switch { "good" => "Все проверки пройдены; ping до 150 мс, отклик до 1500 мс", "warning" => "Часть проверок не прошла или задержка повышена", "bad" => "Большинство проверок не прошло", _ => "Ещё не проверялась" }) + (IsActive ? "\nВключена сейчас" : "");
         public static string ShortName(string name) => name.Replace("general (", "").Replace(").bat", "").Replace("general.bat", "Основная");
         public static Row From(string name, Result? result, string? active, string? saved)
         {
@@ -194,7 +247,7 @@ public partial class MainWindow : Window
         CardSubtitle.Text = active ? "Обход включён" : "Готова к запуску";
         CardSubtitle.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardMuted" : "Muted");
         MetricsGrid.Visibility = firstRun ? Visibility.Collapsed : Visibility.Visible;
-        TestTimestamp.Visibility = firstRun ? Visibility.Collapsed : Visibility.Visible;
+        TestTimestamp.Visibility = Visibility.Collapsed;
         CardPing.Text = row.Ping; CardResponse.Text = row.Response;
         var groups = row.Result?.Probes.GroupBy(p => p.Service).ToList();
         CardPassed.Text = groups?.Count > 0 ? $"{groups.Count(g => g.All(p => p.Ok))} / {groups.Count}" : "—";
@@ -225,6 +278,12 @@ public partial class MainWindow : Window
         ModeLabel.Text = ""; ToggleButton.Content = "Выключить"; AdminButton.Visibility = Visibility.Collapsed;
         Footer.Text = "Предпросмотр интерфейса · движок не запущен";
     }
+    internal void PreviewBusyState()
+    {
+        if (!preview) throw new InvalidOperationException("Preview only");
+        SetBusy(true); StatusDetail.Text = "19 из 22 · general (SIMPLE FAKE ALT).bat";
+        Progress.Value = 86; Footer.Text = "";
+    }
     void UpdateActive()
     {
         ModeLabel.Text = settings.SetupComplete ? "" : "ПЕРВЫЙ ЗАПУСК";
@@ -246,21 +305,23 @@ public partial class MainWindow : Window
     internal void ShowFromTray() { Show(); WindowState = WindowState.Normal; Activate(); }
     void ExitClick(object sender, RoutedEventArgs e) => ExitApp();
     internal void ExitApp() { allowExit = true; if (operation != null) { operation.Cancel(); Footer.Text = "Останавливаем проверку перед выходом…"; } else Close(); }
-    async Task Work(Func<CancellationToken, Task> action)
+    async Task Work(Func<CancellationToken, Task> action, string scope = "general", string? failureStrategy = null, bool recordFailure = true)
     {
         if (operation != null) return;
         operation = new(); SetBusy(true);
         try { await action(operation.Token); }
         catch (OperationCanceledException) { if (!engine.Running) StatusTitle.Text = "Проверка остановлена"; Footer.Text = "Операция отменена. Предыдущее состояние восстановлено, если оно было активно."; }
-        catch (Exception ex) { statistics.Failure(ex, settings.Strategy); if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
+        catch (Exception ex) { if (recordFailure) statistics.Failure(ex, failureStrategy ?? settings.Strategy, scope); if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
         finally { operation.Dispose(); operation = null; SetBusy(false); Progress.IsIndeterminate = false; Progress.Visibility = Visibility.Collapsed; if (allowExit) _ = Dispatcher.BeginInvoke(new Action(Close)); Refresh(); wasRunning = engine.Running; ToggleButton.Content = engine.Running ? "Выключить" : "Включить"; UpdateActive(); _ = statistics.Flush(lifetime.Token); }
     }
     void SetBusy(bool busy)
     {
+        if (settings.HideStrategies) Height = busy ? 480 : 430;
         AppCheckButton.IsEnabled = !busy;
         AppInstallButton.IsEnabled = !busy && appRelease != null;
         foreach (var button in new[] { AutoButton, ToggleButton, ManualButton, SingleButton, SaveButton, CheckButton, DiagnoseButton, AdminButton }) button.IsEnabled = !busy;
         GameBox.IsEnabled = IpsetBox.IsEnabled = AutoConnectBox.IsEnabled = UpdatesBox.IsEnabled = StartupBox.IsEnabled = TrayBox.IsEnabled = !busy;
+        AutoButton.Visibility = busy ? Visibility.Collapsed : Visibility.Visible;
         StatusDetail.Visibility = busy ? Visibility.Visible : Visibility.Collapsed; LaterButton.IsEnabled = !busy; Progress.Visibility = busy ? Visibility.Visible : Visibility.Collapsed; CancelButton.IsEnabled = busy; CancelButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed; UpdateButton.IsEnabled = !busy && release != null && release.Version != Updater.Version;
     }
     void Connected()
@@ -283,7 +344,7 @@ public partial class MainWindow : Window
         Store.Log(DiagnosticsText.Text);
         if (conflicts.Length > 0) throw new InvalidOperationException("Другой zapret уже работает. Завершите его в исходной программе перед подбором.");
     }
-    async void AutoClick(object sender, RoutedEventArgs e) => await Work(ct => Scan(Strategies.List(Store.Engine), true, ct));
+    async void AutoClick(object sender, RoutedEventArgs e) => await Work(ct => Scan(Strategies.List(Store.Engine), true, ct), "strategy_test");
     async Task CheckAppUpdate(CancellationToken ct = default)
     {
         if (appCheckRunning || lifetime.IsCancellationRequested) return;
@@ -326,13 +387,14 @@ public partial class MainWindow : Window
         catch (Exception ex) { statistics.Update("app_download", "failure", appRelease.Version, ex); throw; }
         ct.ThrowIfCancellationRequested();
         await statistics.Flush(ct);
-        AppUpdater.Launch(area);
+        try { AppUpdater.Launch(area); }
+        catch (Exception ex) { statistics.Update("app_install", "failure", appRelease.Version, ex); throw; }
         engine.Stop(); allowExit = true;
-    });
+    }, "app_install", recordFailure: false);
     async void SingleClick(object sender, RoutedEventArgs e)
     {
         SelectedExpander.IsOpen = false;
-        if (ResultsGrid.SelectedItem is Row row) await Work(ct => Scan([row.Name], false, ct));
+        if (ResultsGrid.SelectedItem is Row row) await Work(ct => Scan([row.Name], false, ct), "strategy_test", row.Name);
         else Footer.Text = "Выберите стратегию в таблице.";
     }
     async Task Scan(string[] names, bool activate, CancellationToken ct)
@@ -349,7 +411,7 @@ public partial class MainWindow : Window
             {
                 ct.ThrowIfCancellationRequested(); StatusDetail.Text = $"{i + 1} из {names.Length} · {names[i]}"; Progress.Value = 100.0 * i / names.Length;
                 try { await engine.Start(names[i], settings, ct); results.Add(new(names[i], await Checks.Run(ct))); }
-                catch (IOException ex) { Store.Log(ex.Message); results.Add(new(names[i], [new("Запуск", false, 0, ex.Message)])); }
+                catch (IOException ex) { statistics.Failure(ex, names[i], "strategy_launch"); Store.Log(ex.Message); results.Add(new(names[i], [new("Запуск", false, 0, ex.Message, Code: Statistics.TechnicalCause(ex))])); }
                 finally { engine.Stop(); }
                 Refresh(); StatusDetail.Text = $"Проверено {i + 1} из {names.Length}. Продолжаем…";
             }
@@ -386,7 +448,7 @@ public partial class MainWindow : Window
         if (engine.Running) { engine.Stop(); StatusTitle.Text = "Обход выключен"; Footer.Text = "Профиль сохранён."; }
         else if (PowerStrategy is string name) await ActivateStrategy(name, ct);
         else Footer.Text = "Выберите стратегию или нажмите «Подобрать автоматически».";
-    });
+    }, "strategy_launch", PowerStrategy);
     async Task ActivateStrategy(string name, CancellationToken ct)
     {
         var previous = engine.Active;
@@ -400,10 +462,10 @@ public partial class MainWindow : Window
     async void ManualClick(object sender, RoutedEventArgs e)
     {
         if (ResultsGrid.SelectedItem is not Row row) { Footer.Text = "Выберите стратегию в таблице."; return; }
-        await Work(ct => ActivateStrategy(row.Name, ct));
+        await Work(ct => ActivateStrategy(row.Name, ct), "strategy_launch", row.Name);
     }
     void CancelClick(object sender, RoutedEventArgs e) => operation?.Cancel();
-    async void DiagnoseClick(object sender, RoutedEventArgs e) => await Work(Diagnose);
+    async void DiagnoseClick(object sender, RoutedEventArgs e) => await Work(Diagnose, "diagnostic");
     void SaveClick(object sender, RoutedEventArgs e)
     {
         try
@@ -487,7 +549,7 @@ public partial class MainWindow : Window
             if (previous != null) await engine.Start(previous, settings, CancellationToken.None);
             throw;
         }
-    });
+    }, "engine_install", recordFailure: false);
     void Elevate(object sender, RoutedEventArgs e)
     {
         try { Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas", WorkingDirectory = Store.Root }); allowExit = true; Close(); }

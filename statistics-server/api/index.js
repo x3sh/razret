@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { validateReport, summarize } from '../lib/protocol.js';
-import { saveReport, readReports, purgeExpired } from '../lib/storage.js';
+import { validateReport, summarize, validateLabel } from '../lib/protocol.js';
+import { saveReport, readReports, purgeExpired, saveLabel, readLabels } from '../lib/storage.js';
 
 const limits = new Map();
 const hash = s => createHash('sha256').update(s).digest('hex');
@@ -55,7 +55,15 @@ export default async function handler(req,res) {
     }
     if (route === '/api/summary' && req.method === 'GET') {
       if (!sessionValid(req)) return reply(401,{error:'Требуется вход.'});
-      const {reports,truncated}=await readReports(30);return reply(200,{...summarize(reports),truncated});
+      const {reports,truncated}=await readReports(30);const data=summarize(reports);
+      const labels=await readLabels(data.testers.map(t=>t.id));data.testers.forEach(t=>t.name=labels[t.id]??'');
+      return reply(200,{...data,truncated});
+    }
+    if (route === '/api/tester-label' && req.method === 'POST') {
+      if (!sessionValid(req)) return reply(401,{error:'Требуется вход.'});
+      if (!sameOrigin(req)) return reply(403,{error:'Forbidden'});
+      let label;try{label=validateLabel(await body(req,1500));}catch{return reply(400,{error:'Некорректное имя или код.'});}
+      await saveLabel(label);return reply(200,{ok:true});
     }
     if (route === '/api/retention' && req.method === 'GET') {
       if (!process.env.CRON_SECRET || !equals(req.headers.authorization, 'Bearer '+process.env.CRON_SECRET)) return reply(401,{error:'Unauthorized'});

@@ -30,12 +30,15 @@ internal static class StatisticsTests
             stats.Test(result); await stats.Flush();
             Check(!File.Exists(path) && wire.Bodies.Count == 0, "no collection or request without consent");
             stats.SetEnabled(true); stats.Test(result); stats.Test(result); stats.Failure(new IOException("secret error path"));
+            var supportCode = stats.SupportCode;
+            using (var reopened = new Statistics(path, new Uri("https://example.invalid/collect"), new HttpClient(new Wire()), true))
+                Check(reopened.SupportCode == supportCode, "support ID persists across restarts after consent");
             await stats.Flush();
             var body = wire.Bodies.Single();
             Check(!body.Contains("private-address") && !body.Contains("Secret") && !body.Contains("secret error"), "no raw probe details or error messages");
             using (var doc = JsonDocument.Parse(body))
             {
-                Check(doc.RootElement.EnumerateObject().Select(p => p.Name).Order().SequenceEqual(new[] { "Schema", "ReportId", "Day", "AppVersion", "EngineVersion", "Metrics" }.Order()), "report has no device, session or exact time fields");
+                Check(doc.RootElement.EnumerateObject().Select(p => p.Name).Order().SequenceEqual(new[] { "Schema", "ReportId", "Day", "AppVersion", "EngineVersion", "Metrics", "TesterId" }.Order()), "report has random support ID but no device fingerprint, session or exact time fields");
                 Check(doc.RootElement.GetProperty("Metrics")[0].GetProperty("Count").GetInt32() == 2, "repeated tests aggregated");
             }
             wire.Status = HttpStatusCode.Accepted; await stats.Flush();
@@ -43,6 +46,9 @@ internal static class StatisticsTests
             stats.Test(result); stats.SetEnabled(false); await stats.Flush();
             Check(!File.Exists(path) && wire.Bodies.Count == 2, "revoking consent erases queue and stops requests");
             stats.SetEnabled(true); await stats.Flush(); Check(wire.Bodies.Count == 2, "re-enabling does not replay old activity");
+            Check(stats.SupportCode != supportCode, "re-enabling creates a new support ID after revocation");
+            Check(Statistics.TechnicalCause(new HttpRequestException("private-host", new System.Net.Sockets.SocketException(10061))) == "socket:10061", "inner socket error retained without message");
+            Check(Statistics.TechnicalCause(new EngineFailure(-1073741819)) == "engine:-1073741819", "engine exit code preserved safely");
             using var canceled = new CancellationTokenSource(); canceled.Cancel(); await stats.Flush(canceled.Token);
             Check(Statistics.SafeStrategy("C:\\Users\\Person\\strategy.bat") == null && Statistics.SafeStrategy("general (ALT11).bat") != null, "only published strategy names accepted");
             Check(!Statistics.SafeReport(new(1, Guid.NewGuid().ToString(), DateTime.UtcNow.ToString("yyyy-MM-dd"), "0.7.3", "1.10.3", [new("error", "failure", Error: "private-user@example.com")])), "corrupt queue cannot send arbitrary text");

@@ -66,8 +66,10 @@ public static class Program
                     if (args.Contains("--snapshot-advanced")) { window.Pages.SelectedIndex = 1; window.AdvancedExpander.IsExpanded = true; }
                     if (args.Contains("--snapshot-active")) window.PreviewActiveState();
                     if (args.Contains("--snapshot-light")) { Appearance.Apply(window, "light"); window.PreviewActiveState(); }
-                    if (args.Contains("--snapshot-narrow")) { window.Width = 540; window.Height = 680; window.PreviewActiveState(true); }
+                    if (args.Contains("--snapshot-narrow")) { window.Width = 700; window.Height = 780; window.PreviewActiveState(true); }
                     if (args.Contains("--snapshot-other")) window.PreviewActiveState(true);
+                    if (args.Contains("--snapshot-hidden")) window.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    if (args.Contains("--snapshot-busy")) window.PreviewBusyState();
                     if (args.Contains("--snapshot-expanded")) window.SelectedExpander.IsOpen = true;
                     window.UpdateLayout();
                     var content = (FrameworkElement)window.Content;
@@ -82,6 +84,8 @@ public static class Program
                     bitmap.Render(content); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
                     var filename = args.Contains("--snapshot-light") ? "preview-light.png" : args.Contains("--snapshot-settings") ? "preview-settings.png" : args.Contains("--snapshot-updates") ? "preview-updates.png" : args.Contains("--snapshot-active") ? "preview-active.png" : args.Contains("--snapshot-other") ? "preview-other.png" : "preview.png";
                     if (args.Contains("--snapshot-menu")) filename = args.Contains("--snapshot-light") ? "preview-menu-light.png" : "preview-menu-dark.png";
+                    if (args.Contains("--snapshot-hidden")) filename = "preview-hidden.png";
+                    if (args.Contains("--snapshot-busy")) filename = "preview-busy.png";
                     using (var output = File.Create(Path.Combine(Store.Data, filename))) png.Save(output);
                     Store.Write("preview-metrics.json", new { WorkingSetBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64, PrivateBytes = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64, Note = "UI snapshot, no running bypass, one measurement" });
                     window.Close();
@@ -151,9 +155,21 @@ public static class SelfTest
                         Assert(visual.BackToActiveButton.Visibility == Visibility.Visible && visual.CardCaption.Text == "АКТИВНАЯ СТРАТЕГИЯ" && visual.SelectedProfileText.Text.Contains(((MainWindow.Row)visual.ResultsGrid.SelectedItem).DisplayName), "top card stays active while selected profile changes below");
                         visual.BackToActiveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).IsActive, "return to active action");
-                        visual.Width = 540; visual.Height = 680;
+                        visual.Width = 700; visual.Height = 780;
                         visual.SelectedExpander.IsOpen = true; visual.UpdateLayout();
                         Assert(visual.ResultsGrid.ActualHeight >= 70, "compact window retains visible strategy rows with details open");
+                        var lastTile = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(visual.ResultsGrid.Items.Count - 1);
+                        Assert(lastTile.TranslatePoint(new Point(0, lastTile.ActualHeight), visual.ResultsGrid).Y <= visual.ResultsGrid.ActualHeight + 1, "all strategy tiles fit without scrolling");
+                        var headerAction = visual.AutoButton.TranslatePoint(new Point(), visual.StrategiesHeader);
+                        Assert(headerAction.Y >= 0 && headerAction.Y < visual.StrategiesHeader.ActualHeight, "automatic selection belongs to strategies heading");
+                        Assert(!visual.CardCaption.IsVisible && !visual.SelectionStatus.IsVisible && !visual.CardSubtitle.IsVisible, "redundant status captions hidden");
+                        var expanded = visual.Height;
+                        visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
+                        Assert(visual.Height < expanded && visual.ResultsGrid.Visibility == Visibility.Collapsed, "hiding strategies reduces window height");
+                        var compactHeader = visual.StrategiesHeader.TranslatePoint(new Point(0, visual.StrategiesHeader.ActualHeight), (UIElement)visual.Content);
+                        Assert(compactHeader.Y < ((FrameworkElement)visual.Content).ActualHeight - 10, "show strategies remains visible in compact mode");
+                        visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
+                        Assert(visual.ResultsGrid.Visibility == Visibility.Visible && visual.Height == expanded, "expanding restores strategies and window height");
                         var actionPosition = visual.AutoButton.TranslatePoint(new Point(0, visual.AutoButton.ActualHeight), visual);
                         Assert(actionPosition.Y < visual.ActualHeight - 20, "compact window keeps primary action inside client area");
                         visual.Pages.SelectedIndex = 2; visual.UpdateLayout();
@@ -238,6 +254,12 @@ public static class SelfTest
         var testedRow = MainWindow.Row.From(rowResult.Name, rowResult, rowResult.Name, rowResult.Name);
         Assert(testedRow.Discord == "✓" && testedRow.Youtube == "✕" && testedRow.Marker == "● активна" && testedRow.Ping == "6 мс", "per-service display and active state");
         messages.Add("PASS: active strategy, per-service marks and separate ping display");
+        Assert(MainWindow.Row.From("general.bat", rowResult, null, null).TestState == "warning", "partial coverage is orange");
+        var allPassed = rowResult with { Probes = rowResult.Probes.Select(p => p with { Ok = true }).ToList() };
+        Assert(MainWindow.Row.From("general.bat", allPassed, null, null).TestState == "good", "complete low-latency coverage is green");
+        Assert(MainWindow.Row.From("general.bat", allPassed with { Probes = allPassed.Probes.Select(p => p with { Ping = 250 }).ToList() }, null, null).TestState == "warning", "high ping is orange even with complete coverage");
+        Assert(MainWindow.Row.From("general.bat", allPassed with { Probes = allPassed.Probes.Select(p => p with { Ok = false }).ToList() }, null, null).TestState == "bad", "failed coverage is red");
+        Assert(MainWindow.Row.From("general.bat", null, null, null).TestState == "unknown", "untested strategy is neutral");
         using (var wire = new MemoryStream(new byte[] { 0x01, 6 }.Concat(Encoding.UTF8.GetBytes("{\"op\":"))
             .Concat(new byte[] { 0x80, 3 }).Concat(Encoding.UTF8.GetBytes("10}")).ToArray()))
         using (var socket = System.Net.WebSockets.WebSocket.CreateFromStream(wire, false, null, Timeout.InfiniteTimeSpan))
