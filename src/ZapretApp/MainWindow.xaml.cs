@@ -35,7 +35,8 @@ public partial class MainWindow : Window
     Row? cardProfile;
     internal string? PowerStrategy => cardProfile?.Name;
     bool loadingTheme = true;
-    double expandedHeight = 740;
+    double expandedHeight = 760;
+    double listWidth = 560;
 
     readonly Func<CancellationToken, Task<Release?>> latestAppRelease;
     public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
@@ -139,7 +140,8 @@ public partial class MainWindow : Window
     void ApplyStrategiesVisibility(bool resize)
     {
         var hidden = settings.HideStrategies;
-        ResultsPanel.Visibility = ResultsGrid.Visibility = StrategyActions.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        ResultsPanel.Visibility = ResultsGrid.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        StrategyActions.Visibility = !hidden && (ManualButton.Visibility == Visibility.Visible || BackToActiveButton.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
         ViewModeButton.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
         StrategiesChevron.RenderTransform = new RotateTransform(hidden ? 180 : 0);
         StrategiesToggleButton.ToolTip = hidden ? "Показать стратегии" : "Свернуть стратегии";
@@ -150,7 +152,8 @@ public partial class MainWindow : Window
     void ToggleStrategiesVisibility(object sender, RoutedEventArgs e)
     {
         SelectedExpander.IsOpen = false;
-        if (!settings.HideStrategies && WindowState == WindowState.Normal) expandedHeight = Math.Max(620, Height - NoticeHeight);
+        if (!settings.HideStrategies && settings.StrategyView != "tiles" && WindowState == WindowState.Normal)
+        { expandedHeight = Math.Max(620, Height - NoticeHeight); listWidth = Width; }
         settings.HideStrategies = !settings.HideStrategies;
         ApplyStrategiesVisibility(true);
         if (!preview && !quiet) Store.Save(settings);
@@ -162,12 +165,33 @@ public partial class MainWindow : Window
         bool compact = settings.HideStrategies && Pages.SelectedIndex == 0;
         double available = SystemParameters.WorkArea.Height;
         Pages.MinHeight = compact ? 48 : Pages.SelectedIndex == 0 ? 160 : 240;
-        MinHeight = Math.Min(available, compact ? 360 : 620);
+        bool grid = !compact && Pages.SelectedIndex == 0 && settings.StrategyView == "tiles";
+        MinWidth = Math.Min(SystemParameters.WorkArea.Width, grid ? 720 : 520);
+        MinHeight = Math.Min(available, compact ? 290 : grid ? 540 : 620);
         MaxHeight = compact ? available : double.PositiveInfinity;
         if (WindowState == WindowState.Normal)
         {
             SizeToContent = compact ? SizeToContent.Height : SizeToContent.Manual;
-            if (!compact) Height = Math.Min(available, expandedHeight + NoticeHeight);
+            if (grid)
+            {
+                var layout = StrategyLayout.Grid(SystemParameters.WorkArea.Width, available, Math.Max(ResultsGrid.Items.Count, Strategies.List(Store.Engine).Length),
+                    NoticeHeight + (operation != null ? 64 : 0) + (AdminButton.Visibility == Visibility.Visible ? 46 : 0)
+                    + (StrategyActions.Visibility == Visibility.Visible ? 44 : 0) + (string.IsNullOrEmpty(Footer.Text) ? 0 : 24));
+                var panel = new FrameworkElementFactory(typeof(System.Windows.Controls.Primitives.UniformGrid));
+                panel.SetValue(System.Windows.Controls.Primitives.UniformGrid.ColumnsProperty, layout.Columns);
+                ResultsGrid.ItemsPanel = new ItemsPanelTemplate(panel);
+                var tileStyle = new Style(typeof(ListBoxItem), (Style)Resources["StrategyTile"]);
+                tileStyle.Setters.Add(new Setter(FrameworkElement.HeightProperty, layout.TileExtent - 6));
+                ResultsGrid.ItemContainerStyle = tileStyle;
+                ResultsGrid.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, layout.AllVisible ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
+                Width = layout.Width; Height = layout.Height;
+            }
+            else
+            {
+                Width = Math.Min(SystemParameters.WorkArea.Width, listWidth);
+                ResultsGrid.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, ScrollBarVisibility.Auto);
+                if (!compact) Height = Math.Min(available, expandedHeight + NoticeHeight);
+            }
         }
     }
     void ApplyStrategyView()
@@ -183,8 +207,11 @@ public partial class MainWindow : Window
     void ToggleStrategyView(object sender, RoutedEventArgs e)
     {
         SelectedExpander.IsOpen = false;
+        if (settings.StrategyView != "tiles" && WindowState == WindowState.Normal)
+        { listWidth = Width; expandedHeight = Math.Max(620, Height - NoticeHeight); }
         settings.StrategyView = settings.StrategyView == "tiles" ? "list" : "tiles";
         ApplyStrategyView();
+        ResizeForContent();
         if (ResultsGrid.SelectedItem is Row row) Dispatcher.BeginInvoke(new Action(() => ResultsGrid.ScrollIntoView(row)));
         if (!preview && !quiet) Store.Save(settings);
     }
@@ -197,6 +224,7 @@ public partial class MainWindow : Window
         ResizeForContent();
     }
     void SettingsClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 1;
+    void DiagnosticsClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 3;
     void Refresh()
     {
         VersionLabel.Text = "zapret " + Updater.Version;
@@ -211,6 +239,7 @@ public partial class MainWindow : Window
         AutoButton.SetResourceReference(Control.BackgroundProperty, "Accent");
         AutoButton.SetResourceReference(Control.ForegroundProperty, "AccentText");
         UpdateActive();
+        ResizeForContent();
 
     }
     public record Row(string Name, string DisplayName, string Marker, string Discord, string Youtube, string Ping, string Response, Result? Result)
@@ -238,8 +267,8 @@ public partial class MainWindow : Window
             }
         }
         public string CompactResult => Result == null ? "Не проверена" : $"{PassedChecks} · {Response}";
-        public string TileTip => $"{DisplayName}\nDiscord: {Discord} · YouTube: {Youtube}\nPing: {Ping} · Отклик: {Response}\n" + (TestState switch { "good" => "Все проверки пройдены; ping до 150 мс, отклик до 1500 мс", "warning" => "Часть проверок не прошла или задержка повышена", "bad" => "Большинство проверок не прошло", _ => "Ещё не проверялась" }) + (IsActive ? "\nВключена сейчас" : "");
-        public static string ShortName(string name) => name.Replace("general (", "").Replace(").bat", "").Replace("general.bat", "Основная");
+        public string TileTip => $"{DisplayName}\nDiscord: {Discord} · YouTube: {Youtube}\nPing: {Ping} · Отклик: {Response}\n" + (TestState switch { "good" => "Все проверки пройдены; ping до 150 мс, отклик до 1500 мс", "warning" => "Часть проверок не прошла или задержка повышена", "bad" => "Большинство проверок не прошло", _ => "Ещё не проверялась" }) + (IsActive ? "\nВключена сейчас" : "") + "\nДвойной щелчок — подробности проверки";
+        public static string ShortName(string name) => System.Text.RegularExpressions.Regex.Replace(name.Replace("general (", "").Replace(").bat", "").Replace("general.bat", "Основная"), @"ALT(\d+)", "ALT $1");
         public static Row From(string name, Result? result, string? active, string? saved)
         {
             var ping = result?.Probes.Where(p => p.Ping.HasValue).Select(p => p.Ping!.Value).ToArray() ?? [];
@@ -264,6 +293,7 @@ public partial class MainWindow : Window
         BackToActiveButton.Visibility = !row.IsActive && ResultsGrid.Items.Cast<Row>().Any(r => r.IsActive) ? Visibility.Visible : Visibility.Collapsed;
         ManualButton.Visibility = row.IsActive || row.Name == settings.Strategy ? Visibility.Collapsed : Visibility.Visible;
         ManualButton.IsEnabled = operation == null;
+        StrategyActions.Visibility = !settings.HideStrategies && (ManualButton.Visibility == Visibility.Visible || BackToActiveButton.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
 
     }
     void RenderStrategyCard(Row row)
@@ -286,8 +316,9 @@ public partial class MainWindow : Window
         SelectionTitle.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardText" : "Text");
         SelectionTitle.Text = row.DisplayName;
         ConnectionDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, active ? "Good" : "Unknown");
-        ToggleButton.SetResourceReference(Control.BackgroundProperty, active ? "Button" : "Accent");
-        ToggleButton.SetResourceReference(Control.ForegroundProperty, active ? "Text" : "AccentText");
+        ConnectionHalo.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        ToggleButton.SetResourceReference(Control.BackgroundProperty, "Accent");
+        ToggleButton.SetResourceReference(Control.ForegroundProperty, "AccentText");
         if (!settings.SetupComplete && !active && results.Count == 0)
         {
             CardCaption.Text = "ДОБРО ПОЖАЛОВАТЬ";
@@ -341,16 +372,13 @@ public partial class MainWindow : Window
         ModeLabel.Text = settings.SetupComplete ? "" : "ПЕРВЫЙ ЗАПУСК";
         tray?.Status(engine.Running);
     }
-    void MenuClick(object sender, RoutedEventArgs e)
-    {
-        var button = (Button)sender;
-        foreach (var item in button.ContextMenu.Items.OfType<MenuItem>())
-            item.IsChecked = item.Tag is string page && int.TryParse(page, out var index) && index == Pages.SelectedIndex;
-        button.ContextMenu.PlacementTarget = button; button.ContextMenu.IsOpen = true;
-    }
-    void Navigate(object sender, RoutedEventArgs e) => Pages.SelectedIndex = int.Parse((string)((MenuItem)sender).Tag);
     void HomeClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 0;
     void DetailsClick(object sender, RoutedEventArgs e) => SelectedExpander.IsOpen = !SelectedExpander.IsOpen;
+    void StrategyDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (operation == null && e.OriginalSource is DependencyObject source && ItemsControl.ContainerFromElement(ResultsGrid, source) is ListBoxItem)
+            SelectedExpander.IsOpen = true;
+    }
     void HelpClick(object sender, RoutedEventArgs e) { var button = (Button)sender; if (HelpPopup.IsOpen && HelpPopup.PlacementTarget == button) { HelpPopup.IsOpen = false; return; } HelpText.Text = (string)button.Tag; HelpPopup.PlacementTarget = button; HelpPopup.IsOpen = true; }
     void HideClick(object sender, RoutedEventArgs e) => HideToTray();
     void HideToTray() { Hide(); if (!trayHintShown) { if (!quiet) tray?.Hint(); trayHintShown = true; } }

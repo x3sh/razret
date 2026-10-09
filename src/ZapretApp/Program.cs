@@ -73,23 +73,18 @@ public static class Program
                     if (args.Contains("--snapshot-notices")) window.PreviewUpdatesState();
                     if (args.Contains("--snapshot-busy")) window.PreviewBusyState();
                     if (args.Contains("--snapshot-expanded")) window.SelectedExpander.IsOpen = true;
-                    window.Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(() =>
+                    var snapshotDelay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+                    snapshotDelay.Tick += (_, _) =>
                     {
+                    snapshotDelay.Stop();
                     window.UpdateLayout();
                     window.StrategyCard.InvalidateMeasure(); window.UpdateLayout();
-                    Store.Write("preview-layout.json", new { window.Width, window.Height, WindowContentHeight = ((FrameworkElement)window.Content).ActualHeight, Elements = new FrameworkElement[] { window.StrategyCard, window.MetricsGrid, window.Pages, window.StrategiesHeader, window.ResultsPanel, window.Footer, window.UpdateBadge }.Select(e => new { e.Name, Height = e.ActualHeight, Y = e.TranslatePoint(new Point(), window).Y, e.IsVisible }) });
+                    Store.Write("preview-layout.json", new { window.Width, window.Height, WindowContentHeight = ((FrameworkElement)window.Content).ActualHeight, Elements = new FrameworkElement[] { window.StrategyCard, window.MetricsGrid, window.Pages, window.StrategiesHeader, window.ResultsPanel, window.Footer, window.UpdateBadge, window.FooterSettingsButton }.Select(e => new { e.Name, Width = e.ActualWidth, Height = e.ActualHeight, Y = e.TranslatePoint(new Point(), window).Y, e.IsVisible }) });
                     var content = (FrameworkElement)window.Content;
                     if (args.Contains("--snapshot-expanded")) { window.SelectedExpander.Child.UpdateLayout(); content = (FrameworkElement)window.SelectedExpander.Child; }
-                    if (args.Contains("--snapshot-menu"))
-                    {
-                        var menu = window.MenuButton.ContextMenu;
-                        window.MenuButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); menu.UpdateLayout();
-                        content = (FrameworkElement)VisualTreeHelper.GetChild(menu, 0);
-                    }
                     var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                     bitmap.Render(content); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
                     var filename = args.Contains("--snapshot-light") ? "preview-light.png" : args.Contains("--snapshot-settings") ? "preview-settings.png" : args.Contains("--snapshot-updates") ? "preview-updates.png" : args.Contains("--snapshot-active") ? "preview-active.png" : args.Contains("--snapshot-other") ? "preview-other.png" : "preview.png";
-                    if (args.Contains("--snapshot-menu")) filename = args.Contains("--snapshot-light") ? "preview-menu-light.png" : "preview-menu-dark.png";
                     if (args.Contains("--snapshot-hidden")) filename = "preview-hidden.png";
                     if (args.Contains("--snapshot-busy")) filename = "preview-busy.png";
                     if (args.Contains("--snapshot-tiles")) filename = "preview-tiles.png";
@@ -99,7 +94,8 @@ public static class Program
                     using (var output = File.Create(Path.Combine(Store.Data, filename))) png.Save(output);
                     Store.Write("preview-metrics.json", new { WorkingSetBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64, PrivateBytes = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64, Note = "UI snapshot, no running bypass, one measurement" });
                     window.Close();
-                    }));
+                    };
+                    snapshotDelay.Start();
                 }));
                 return app.Run(window);
             }
@@ -141,6 +137,8 @@ public static class SelfTest
                     Assert(window.AppUpdateBanner.TranslatePoint(new Point(), window).Y < window.StrategyCard.TranslatePoint(new Point(), window).Y, "notice above current strategy");
                     window.AppNotice.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                     Assert(window.Pages.SelectedIndex == 2, "notice opens app updates");
+                    window.FooterSettingsButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    Assert(window.Pages.SelectedIndex == 1, "bottom navigation opens settings from updates");
                     window.Pages.SelectedIndex = 0;
                     window.DismissAppButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                     Assert(!window.AppUpdateBanner.IsVisible && window.UpdateDot.Visibility == Visibility.Visible && window.AppInstallButton.IsEnabled, "dismissal hides banner but preserves available update");
@@ -162,9 +160,12 @@ public static class SelfTest
                         var selectedName = ((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name;
                         Assert(visual.PowerStrategy == active.Name && selectedName != active.Name, "browsing preserves active strategy");
                         visual.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
-                        Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name == selectedName && visual.PowerStrategy == active.Name && visual.Width == 540, "switching to tiles preserves selection, connection and window width");
+                        Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name == selectedName && visual.PowerStrategy == active.Name && visual.Width > 560, "grid expands window while preserving selected and active strategies");
+                        var finalTile = visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(visual.ResultsGrid.Items.Count - 1) as FrameworkElement;
+                        Assert(finalTile != null && finalTile.TranslatePoint(new Point(0, finalTile.ActualHeight), visual.ResultsGrid).Y <= visual.ResultsGrid.ActualHeight + 1, "all tiles visible at once in expanded grid");
                         Assert(visual.ViewModeButton.ToolTip.ToString() == "Показать списком", "tiles offer list alternative");
                         visual.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
+                        Assert(visual.Width == 560, "return to list restores narrow window");
                         var last = visual.ResultsGrid.Items[visual.ResultsGrid.Items.Count - 1];
                         visual.ResultsGrid.ScrollIntoView(last); visual.UpdateLayout();
                         var lastRow = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromItem(last);
@@ -221,7 +222,7 @@ public static class SelfTest
             Store.Root = actualRoot;
             if (Path.GetDirectoryName(temp) == Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) && Path.GetFileName(temp).StartsWith("razret-ui-")) Directory.Delete(temp, true);
         }
-        Store.Write("ui-test.json", new { Passed = true, Checks = new[] { "Tray, themes and navigation", "Narrow scrollable list and two-column tiles", "Selection and active strategy preserved across view changes", "Collapse and settings navigation", "App notification independent of engine checks", "Dismissals, new releases and update actions", "Update progress and cancel", "Persistent view and dismissal preferences" }, NetworkChanged = false });
+        Store.Write("ui-test.json", new { Passed = true, Checks = new[] { "Tray, themes and navigation", "Narrow scrollable list and expanded grid overview", "Selection and active strategy preserved across view changes", "Collapse and settings navigation", "App notification independent of engine checks", "Dismissals, new releases and update actions", "Update progress and cancel", "Persistent view and dismissal preferences" }, NetworkChanged = false });
     }
     public static async Task Update()
     {
@@ -259,6 +260,18 @@ public static class SelfTest
     public static void Run()
     {
         var messages = new List<string>();
+        var desktopGrid = StrategyLayout.Grid(1920, 1040, 22);
+        Assert(desktopGrid.AllVisible && desktopGrid.Columns == 4, "desktop grid displays every strategy in four columns");
+        var laptopGrid = StrategyLayout.Grid(1366, 720, 22);
+        Assert(laptopGrid.AllVisible && laptopGrid.Width <= 1366 && laptopGrid.Height <= 720 && laptopGrid.TileExtent >= 64, "grid adapts to laptop work area without tiny tiles");
+        var limitedGrid = StrategyLayout.Grid(800, 540, 22);
+        Assert(!limitedGrid.AllVisible && limitedGrid.Width <= 800 && limitedGrid.Height <= 540, "small work area gets a reachable fallback rather than clipped strategies");
+        foreach (var scale in new[] { 1.0, 1.25, 1.5 })
+        {
+            var scaledGrid = StrategyLayout.Grid(1920 / scale, 1040 / scale, 22);
+            Assert(scaledGrid.AllVisible && scaledGrid.Width <= 1920 / scale && scaledGrid.Height <= 1040 / scale, "grid fits logical work area at common display scales");
+        }
+        messages.Add("PASS: grid overview fits desktop and laptop, constrained screens remain reachable");
         Strategies.Validate(Store.Engine);
         int count = 0;
         foreach (var name in Strategies.List(Store.Engine))

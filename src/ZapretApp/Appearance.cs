@@ -18,11 +18,11 @@ public static class Appearance
         }
         var values = new Dictionary<string, (string Dark, string Light)>
         {
-            ["Canvas"] = ("#171E27", "#F2F4F8"), ["Surface"] = ("#202A36", "#FFFFFF"),
+            ["Canvas"] = ("#1A222B", "#F2F4F8"), ["Surface"] = ("#222D38", "#FFFFFF"),
             ["MetricSurface"] = ("#1B2430", "#F5F7FA"),
             ["Text"] = ("#F1F5FC", "#202B3D"), ["Muted"] = ("#A6B5C9", "#617087"),
             ["Border"] = ("#344151", "#DFE5EE"), ["Button"] = ("#2C394A", "#E7ECF4"),
-            ["Accent"] = ("#3984E8", "#256ED0"), ["AccentText"] = ("#FFFFFF", "#FFFFFF"),
+            ["Accent"] = ("#147BF1", "#256ED0"), ["AccentText"] = ("#FFFFFF", "#FFFFFF"),
             ["RowHover"] = ("#29384A", "#F0F5FD"), ["RowSelected"] = ("#263F60", "#E5EFFF"),
             ["RowActive"] = ("#223A34", "#EAF7EF"), ["RowActiveText"] = ("#96E5B5", "#237046"),
             ["FailedSurface"] = ("#33282C", "#FCF0F0"), ["FailedBorder"] = ("#67434A", "#DDB6BC"),
@@ -31,8 +31,8 @@ public static class Appearance
             ["CardActiveBorder"] = ("#3A495C", "#CBD7E8"), ["CardText"] = ("#F1F5FC", "#202B3D"),
             ["CardMuted"] = ("#A6B5C9", "#617087"), ["Badge"] = ("#2C4F3D", "#D7EFDF"),
             ["BadgeText"] = ("#B7F1CC", "#267345"), ["Notice"] = ("#233750", "#E7F0FF"),
-            ["Good"] = ("#61D997", "#209657"), ["Warning"] = ("#F0B955", "#B77716"),
-            ["Bad"] = ("#EF777C", "#D64550"), ["Unknown"] = ("#8090A4", "#8794A6")
+            ["Good"] = ("#43DC65", "#209657"), ["Warning"] = ("#FFC33C", "#B77716"),
+            ["Bad"] = ("#FF575D", "#D64550"), ["Unknown"] = ("#8899AB", "#8794A6")
         };
         foreach (var pair in values)
         {
@@ -43,6 +43,9 @@ public static class Appearance
             (Color)ColorConverter.ConvertFromString(dark ? "#283544" : "#FFFFFF"),
             (Color)ColorConverter.ConvertFromString(dark ? "#202A36" : "#F7FAFE"), new Point(0, 0), new Point(1, 1));
         card.Freeze(); window.Resources["CardActive"] = card;
+        var primary = new LinearGradientBrush((Color)ColorConverter.ConvertFromString(dark ? "#168CFF" : "#3488E8"),
+            (Color)ColorConverter.ConvertFromString(dark ? "#0868DF" : "#1D65C7"), new Point(0, 0), new Point(0, 1));
+        primary.Freeze(); window.Resources["Accent"] = primary;
         var handle = new WindowInteropHelper(window).Handle;
         if (handle != nint.Zero) { int value = dark ? 1 : 0; DwmSetWindowAttribute(handle, 20, ref value, sizeof(int)); }
     }
