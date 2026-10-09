@@ -70,27 +70,33 @@ public static class Program
                     if (args.Contains("--snapshot-other")) window.PreviewActiveState(true);
                     if (args.Contains("--snapshot-hidden")) window.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                     if (args.Contains("--snapshot-tiles")) window.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    if (args.Contains("--snapshot-grid-short")) { window.Width = 700; window.Height = 460; }
                     if (args.Contains("--snapshot-notices")) window.PreviewUpdatesState();
                     if (args.Contains("--snapshot-busy")) window.PreviewBusyState();
                     if (args.Contains("--snapshot-expanded")) window.SelectedExpander.IsOpen = true;
+                    if (args.Contains("--snapshot-theme")) { window.Pages.SelectedIndex = 1; window.ThemeBox.IsDropDownOpen = true; }
                     var snapshotDelay = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                     snapshotDelay.Tick += (_, _) =>
                     {
                     snapshotDelay.Stop();
                     window.UpdateLayout();
                     window.StrategyCard.InvalidateMeasure(); window.UpdateLayout();
+                    if (args.Contains("--snapshot-advanced")) { window.AdvancedExpander.BringIntoView(); window.UpdateLayout(); }
                     Store.Write("preview-layout.json", new { window.Width, window.Height, WindowContentHeight = ((FrameworkElement)window.Content).ActualHeight, Elements = new FrameworkElement[] { window.StrategyCard, window.MetricsGrid, window.Pages, window.StrategiesHeader, window.ResultsPanel, window.Footer, window.UpdateBadge, window.FooterSettingsButton }.Select(e => new { e.Name, Width = e.ActualWidth, Height = e.ActualHeight, Y = e.TranslatePoint(new Point(), window).Y, e.IsVisible }) });
                     var content = (FrameworkElement)window.Content;
                     if (args.Contains("--snapshot-expanded")) { window.SelectedExpander.Child.UpdateLayout(); content = (FrameworkElement)window.SelectedExpander.Child; }
+                    if (args.Contains("--snapshot-theme")) { content = (FrameworkElement)((System.Windows.Controls.Primitives.Popup)window.ThemeBox.Template.FindName("PART_Popup", window.ThemeBox)).Child; content.UpdateLayout(); }
                     var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                     bitmap.Render(content); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
                     var filename = args.Contains("--snapshot-light") ? "preview-light.png" : args.Contains("--snapshot-settings") ? "preview-settings.png" : args.Contains("--snapshot-updates") ? "preview-updates.png" : args.Contains("--snapshot-active") ? "preview-active.png" : args.Contains("--snapshot-other") ? "preview-other.png" : "preview.png";
                     if (args.Contains("--snapshot-hidden")) filename = "preview-hidden.png";
                     if (args.Contains("--snapshot-busy")) filename = "preview-busy.png";
                     if (args.Contains("--snapshot-tiles")) filename = "preview-tiles.png";
+                    if (args.Contains("--snapshot-grid-short")) filename = "preview-grid-short.png";
                     if (args.Contains("--snapshot-notices")) filename = "preview-notices.png";
                     if (args.Contains("--snapshot-narrow")) filename = "preview-narrow.png";
                     if (args.Contains("--snapshot-advanced")) filename = "preview-advanced.png";
+                    if (args.Contains("--snapshot-theme")) filename = "preview-theme.png";
                     using (var output = File.Create(Path.Combine(Store.Data, filename))) png.Save(output);
                     Store.Write("preview-metrics.json", new { WorkingSetBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64, PrivateBytes = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64, Note = "UI snapshot, no running bypass, one measurement" });
                     window.Close();
@@ -163,9 +169,42 @@ public static class SelfTest
                         Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name == selectedName && visual.PowerStrategy == active.Name && visual.Width > 560, "grid expands window while preserving selected and active strategies");
                         var finalTile = visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(visual.ResultsGrid.Items.Count - 1) as FrameworkElement;
                         Assert(finalTile != null && finalTile.TranslatePoint(new Point(0, finalTile.ActualHeight), visual.ResultsGrid).Y <= visual.ResultsGrid.ActualHeight + 1, "all tiles visible at once in expanded grid");
+                        var overviewSize = new Size(visual.Width, visual.Height);
+                        visual.Width = 700; visual.Height = 460; visual.UpdateLayout(); visual.UpdateLayout();
+                        Assert(visual.Width == 700 && visual.Height == 460, "manual resize does not force overview dimensions");
+                        var gridScroller = FindVisual<System.Windows.Controls.ScrollViewer>(visual.ResultsGrid)!;
+                        gridScroller.ScrollToTop(); visual.UpdateLayout();
+                        gridScroller.RaiseEvent(new System.Windows.Input.MouseWheelEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, -120) { RoutedEvent = System.Windows.Input.Mouse.MouseWheelEvent }); visual.UpdateLayout();
+                        Assert(gridScroller.VerticalOffset > 0, "mouse wheel scrolls shortened grid");
+                        gridScroller.ScrollToTop(); visual.UpdateLayout();
+                        Assert(gridScroller.ScrollableHeight > 0 && gridScroller.ComputedVerticalScrollBarVisibility == Visibility.Visible, "short grid gets vertical scrolling");
+                        var firstTile = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(0);
+                        Assert(firstTile.ActualHeight == 58, "tiles retain fixed readable height after resize");
+                        var lamp = FindNamedVisual(firstTile, "TileLamp")!;
+                        var name = FindNamedVisual(firstTile, "TileName")!;
+                        double lampCenter = lamp.TranslatePoint(new Point(0, lamp.ActualHeight / 2), firstTile).Y;
+                        double textCenter = name.TranslatePoint(new Point(0, name.ActualHeight / 2), firstTile).Y;
+                        Assert(Math.Abs(lampCenter - textCenter) < 1, "lamp and tile name share a vertical center");
+                        visual.ResultsGrid.ScrollIntoView(visual.ResultsGrid.Items[visual.ResultsGrid.Items.Count - 1]); visual.UpdateLayout();
+                        var bottomTile = (FrameworkElement)visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(visual.ResultsGrid.Items.Count - 1);
+                        Assert(bottomTile.TranslatePoint(new Point(0, bottomTile.ActualHeight), visual.ResultsGrid).Y <= visual.ResultsGrid.ActualHeight + 1, "last tile reachable in shortened window");
+                        visual.ResultsGrid.ScrollIntoView(visual.ResultsGrid.Items[0]);
+                        visual.Width = overviewSize.Width; visual.Height = overviewSize.Height; visual.UpdateLayout(); visual.UpdateLayout();
+                        Assert(gridScroller.ScrollableHeight == 0, $"scrollbar disappears when all tiles fit again: window {visual.Width}x{visual.Height}, viewport {gridScroller.ViewportHeight}, extent {gridScroller.ExtentHeight}, panel {visual.ResultsGrid.ActualHeight}");
+                        foreach (var key in new[] { "IconHelp", "IconSettings", "IconGrid", "IconWifi", "IconClock", "IconChecks", "IconTick" })
+                        {
+                            var bounds = ((Geometry)visual.Resources[key]).Bounds;
+                            Assert(bounds.Left >= 0 && bounds.Top >= 0 && bounds.Right <= 24 && bounds.Bottom <= 24, "icons fit their common 24-unit canvas");
+                        }
+                        foreach (var group in new[] { visual.MetricPingGroup, visual.MetricResponseGroup, visual.MetricPassedGroup })
+                        {
+                            var segment = (FrameworkElement)VisualTreeHelper.GetParent(group);
+                            double center = group.TranslatePoint(new Point(group.ActualWidth / 2, 0), segment).X;
+                            Assert(Math.Abs(center - segment.ActualWidth / 2) < 1.1, "metric icon and text group centered in segment");
+                        }
                         Assert(visual.ViewModeButton.ToolTip.ToString() == "Показать списком", "tiles offer list alternative");
                         visual.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
-                        Assert(visual.Width == 560, "return to list restores narrow window");
+                        Assert(visual.Width == 520, "return to list restores narrow window");
                         var last = visual.ResultsGrid.Items[visual.ResultsGrid.Items.Count - 1];
                         visual.ResultsGrid.ScrollIntoView(last); visual.UpdateLayout();
                         var lastRow = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromItem(last);
@@ -180,7 +219,7 @@ public static class SelfTest
                         var collapsedFooter = visual.UpdateBadge.TranslatePoint(new Point(0, visual.UpdateBadge.ActualHeight), (UIElement)visual.Content);
                         Assert(collapsedFooter.Y <= ((FrameworkElement)visual.Content).ActualHeight - 8 && visual.StrategiesHeader.ActualHeight >= 30, "compact controls fit without clipping");
                         visual.Pages.SelectedIndex = 1; visual.UpdateLayout();
-                        Assert(visual.Height >= 620 && visual.StartupBox.IsVisible, "settings expand collapsed window");
+                        Assert(visual.Height >= 600 && visual.StartupBox.IsVisible, "settings expand collapsed window");
                         Assert(visual.SaveButton.IsVisible && visual.SaveButton.TranslatePoint(new Point(0, visual.SaveButton.ActualHeight), visual).Y < visual.ActualHeight - 45, "settings save stays reachable without scrolling");
                         visual.Pages.SelectedIndex = 0; visual.UpdateLayout();
                         Assert(visual.Height < expanded && !visual.ResultsPanel.IsVisible, "home restores compact state");
@@ -222,7 +261,7 @@ public static class SelfTest
             Store.Root = actualRoot;
             if (Path.GetDirectoryName(temp) == Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) && Path.GetFileName(temp).StartsWith("razret-ui-")) Directory.Delete(temp, true);
         }
-        Store.Write("ui-test.json", new { Passed = true, Checks = new[] { "Tray, themes and navigation", "Narrow scrollable list and expanded grid overview", "Selection and active strategy preserved across view changes", "Collapse and settings navigation", "App notification independent of engine checks", "Dismissals, new releases and update actions", "Update progress and cancel", "Persistent view and dismissal preferences" }, NetworkChanged = false });
+        Store.Write("ui-test.json", new { Passed = true, Checks = new[] { "Tray, themes and navigation", "Narrow scrollable list and expanded grid overview", "Manual grid resize, fixed tile height, wheel scrolling and last tile reachability", "Overview restored without scrolling when tiles fit", "Aligned tile indicators and centered metric groups", "Vector icons stay within their shared canvas", "Selection and active strategy preserved across view changes", "Collapse and settings navigation", "App notification independent of engine checks", "Dismissals, new releases and update actions", "Update progress and cancel", "Persistent view and dismissal preferences" }, NetworkChanged = false });
     }
     public static async Task Update()
     {
@@ -257,6 +296,23 @@ public static class SelfTest
         Store.Write("update-test.json", new { Passed = true, Tests = messages });
     }
     static void Assert(bool value, string message) { if (!value) throw new Exception("TEST FAILED: " + message); }
+    static T? FindVisual<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T found) return found;
+            if (FindVisual<T>(child) is T nested) return nested;
+        }
+        return null;
+    }
+    static FrameworkElement? FindNamedVisual(DependencyObject root, string name)
+    {
+        if (root is FrameworkElement element && element.Name == name) return element;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            if (FindNamedVisual(VisualTreeHelper.GetChild(root, i), name) is { } match) return match;
+        return null;
+    }
     public static void Run()
     {
         var messages = new List<string>();

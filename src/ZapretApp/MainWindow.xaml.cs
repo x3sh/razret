@@ -35,14 +35,17 @@ public partial class MainWindow : Window
     Row? cardProfile;
     internal string? PowerStrategy => cardProfile?.Name;
     bool loadingTheme = true;
-    double expandedHeight = 760;
-    double listWidth = 560;
+    double expandedHeight = 640;
+    double listWidth = 520;
+    double gridWidth, gridHeight, lastNoticeHeight;
+    int lastPage;
 
     readonly Func<CancellationToken, Task<Release?>> latestAppRelease;
     public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
     {
         this.latestAppRelease = latestAppRelease ?? AppUpdater.Latest;
         InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; SelectedExpander.IsOpen = false; } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
+        ResultsGrid.SizeChanged += (_, _) => UpdateTileColumns();
         statistics = new(settings.ShareStatistics && settings.StatisticsConsentVersion >= 2, preview || quiet);
         StatisticsBox.IsChecked = settings.ShareStatistics && settings.StatisticsConsentVersion >= 2;
         ShowStatisticsIdentity();
@@ -69,7 +72,7 @@ public partial class MainWindow : Window
             catch (Exception ex) when (ex is System.Text.Json.JsonException or KeyNotFoundException) { Store.Log("Не удалось прочитать прошлые результаты: " + ex.Message); }
         }
         ApplyStrategyView();
-        ApplyStrategiesVisibility(false);
+        ApplyStrategiesVisibility();
         AppVersionText.Text = AppUpdater.Version;
         EngineVersionText.Text = Updater.Version;
         Refresh();
@@ -137,7 +140,7 @@ public partial class MainWindow : Window
         if (statistics.SupportCode is string code) { Clipboard.SetText(code); Footer.Text = "Код тестировщика скопирован."; }
     }
     static void Select(ComboBox box, string tag) => box.SelectedItem = box.Items.Cast<ComboBoxItem>().First(x => (string)x.Tag == tag);
-    void ApplyStrategiesVisibility(bool resize)
+    void ApplyStrategiesVisibility()
     {
         var hidden = settings.HideStrategies;
         ResultsPanel.Visibility = ResultsGrid.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
@@ -146,52 +149,78 @@ public partial class MainWindow : Window
         StrategiesChevron.RenderTransform = new RotateTransform(hidden ? 180 : 0);
         StrategiesToggleButton.ToolTip = hidden ? "Показать стратегии" : "Свернуть стратегии";
         System.Windows.Automation.AutomationProperties.SetName(StrategiesToggleButton, (string)StrategiesToggleButton.ToolTip);
-        ResizeForContent();
-        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(ResizeForContent));
+        ResizeForContent(true);
+        Dispatcher.BeginInvoke(DispatcherPriority.ContextIdle, new Action(UpdateTileColumns));
     }
     void ToggleStrategiesVisibility(object sender, RoutedEventArgs e)
     {
         SelectedExpander.IsOpen = false;
-        if (!settings.HideStrategies && settings.StrategyView != "tiles" && WindowState == WindowState.Normal)
-        { expandedHeight = Math.Max(620, Height - NoticeHeight); listWidth = Width; }
+        if (!settings.HideStrategies) RememberHomeSize();
         settings.HideStrategies = !settings.HideStrategies;
-        ApplyStrategiesVisibility(true);
+        ApplyStrategiesVisibility();
         if (!preview && !quiet) Store.Save(settings);
     }
-    double NoticeHeight => (AppUpdateBanner.Visibility == Visibility.Visible ? 76 : 0) + (EngineUpdateBanner.Visibility == Visibility.Visible ? 76 : 0);
-    void ResizeForContent()
+    double NoticeHeight => (AppUpdateBanner.Visibility == Visibility.Visible ? 66 : 0) + (EngineUpdateBanner.Visibility == Visibility.Visible ? 66 : 0);
+    void RememberHomeSize()
+    {
+        if (WindowState != WindowState.Normal || settings.HideStrategies || lastPage != 0) return;
+        if (settings.StrategyView == "tiles") { gridWidth = Width; gridHeight = Height - lastNoticeHeight; }
+        else { listWidth = Width; expandedHeight = Math.Max(420, Height - lastNoticeHeight); }
+    }
+    void ResizeForContent(bool fitView = false)
     {
         if (settings == null || Pages == null) return;
         bool compact = settings.HideStrategies && Pages.SelectedIndex == 0;
         double available = SystemParameters.WorkArea.Height;
-        Pages.MinHeight = compact ? 48 : Pages.SelectedIndex == 0 ? 160 : 240;
+        Pages.MinHeight = compact ? 40 : Pages.SelectedIndex == 0 ? 110 : 180;
         bool grid = !compact && Pages.SelectedIndex == 0 && settings.StrategyView == "tiles";
-        MinWidth = Math.Min(SystemParameters.WorkArea.Width, grid ? 720 : 520);
-        MinHeight = Math.Min(available, compact ? 290 : grid ? 540 : 620);
+        MinWidth = Math.Min(SystemParameters.WorkArea.Width, grid ? 600 : 480);
+        MinHeight = Math.Min(available, compact ? 250 : 420);
         MaxHeight = compact ? available : double.PositiveInfinity;
         if (WindowState == WindowState.Normal)
         {
             SizeToContent = compact ? SizeToContent.Height : SizeToContent.Manual;
             if (grid)
             {
-                var layout = StrategyLayout.Grid(SystemParameters.WorkArea.Width, available, Math.Max(ResultsGrid.Items.Count, Strategies.List(Store.Engine).Length),
-                    NoticeHeight + (operation != null ? 64 : 0) + (AdminButton.Visibility == Visibility.Visible ? 46 : 0)
-                    + (StrategyActions.Visibility == Visibility.Visible ? 44 : 0) + (string.IsNullOrEmpty(Footer.Text) ? 0 : 24));
-                var panel = new FrameworkElementFactory(typeof(System.Windows.Controls.Primitives.UniformGrid));
-                panel.SetValue(System.Windows.Controls.Primitives.UniformGrid.ColumnsProperty, layout.Columns);
-                ResultsGrid.ItemsPanel = new ItemsPanelTemplate(panel);
-                var tileStyle = new Style(typeof(ListBoxItem), (Style)Resources["StrategyTile"]);
-                tileStyle.Setters.Add(new Setter(FrameworkElement.HeightProperty, layout.TileExtent - 6));
-                ResultsGrid.ItemContainerStyle = tileStyle;
-                ResultsGrid.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, layout.AllVisible ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto);
-                Width = layout.Width; Height = layout.Height;
+                if (fitView)
+                {
+                    var layout = StrategyLayout.Grid(SystemParameters.WorkArea.Width, available, Math.Max(ResultsGrid.Items.Count, Strategies.List(Store.Engine).Length),
+                        NoticeHeight + (operation != null ? 54 : 0) + (AdminButton.Visibility == Visibility.Visible ? 36 : 0)
+                        + (StrategyActions.Visibility == Visibility.Visible ? 36 : 0) + (string.IsNullOrEmpty(Footer.Text) ? 0 : 24));
+                    Width = Math.Min(SystemParameters.WorkArea.Width, gridWidth > 0 ? gridWidth : layout.Width);
+                    Height = Math.Min(available, gridHeight > 0 ? gridHeight + NoticeHeight : layout.Height);
+                }
             }
             else
             {
-                Width = Math.Min(SystemParameters.WorkArea.Width, listWidth);
-                ResultsGrid.SetValue(ScrollViewer.VerticalScrollBarVisibilityProperty, ScrollBarVisibility.Auto);
-                if (!compact) Height = Math.Min(available, expandedHeight + NoticeHeight);
+                if (fitView)
+                {
+                    Width = Math.Min(SystemParameters.WorkArea.Width, listWidth);
+                    if (!compact) Height = Math.Min(available, Math.Max(Pages.SelectedIndex == 0 ? 420 : 600, expandedHeight) + NoticeHeight);
+                }
             }
+            if (!compact && !fitView && NoticeHeight != lastNoticeHeight) Height = Math.Min(available, Height + NoticeHeight - lastNoticeHeight);
+        }
+        lastNoticeHeight = NoticeHeight;
+        UpdateTileColumns();
+    }
+    static T? VisualChild<T>(DependencyObject parent) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, i);
+            if (child is T found) return found;
+            if (VisualChild<T>(child) is T nested) return nested;
+        }
+        return null;
+    }
+    void UpdateTileColumns()
+    {
+        if (settings == null || settings.StrategyView != "tiles" || ResultsGrid.ActualWidth <= 0) return;
+        if (VisualChild<System.Windows.Controls.Primitives.UniformGrid>(ResultsGrid) is { } panel)
+        {
+            int columns = StrategyLayout.ColumnsForViewport(ResultsGrid.ActualWidth);
+            if (panel.Columns != columns) panel.Columns = columns;
         }
     }
     void ApplyStrategyView()
@@ -207,21 +236,22 @@ public partial class MainWindow : Window
     void ToggleStrategyView(object sender, RoutedEventArgs e)
     {
         SelectedExpander.IsOpen = false;
-        if (settings.StrategyView != "tiles" && WindowState == WindowState.Normal)
-        { listWidth = Width; expandedHeight = Math.Max(620, Height - NoticeHeight); }
+        RememberHomeSize();
         settings.StrategyView = settings.StrategyView == "tiles" ? "list" : "tiles";
         ApplyStrategyView();
-        ResizeForContent();
+        ResizeForContent(true);
         if (ResultsGrid.SelectedItem is Row row) Dispatcher.BeginInvoke(new Action(() => ResultsGrid.ScrollIntoView(row)));
         if (!preview && !quiet) Store.Save(settings);
     }
     void PageChanged(object sender, SelectionChangedEventArgs e)
     {
         if (e.Source != Pages || settings == null) return;
+        RememberHomeSize();
+        lastPage = Pages.SelectedIndex;
         HelpPopup.IsOpen = SelectedExpander.IsOpen = false;
         ShowUpdateNotices();
         UpdateCancelButton.Visibility = operation != null && Pages.SelectedIndex != 0 ? Visibility.Visible : Visibility.Collapsed;
-        ResizeForContent();
+        ResizeForContent(true);
     }
     void SettingsClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 1;
     void DiagnosticsClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 3;

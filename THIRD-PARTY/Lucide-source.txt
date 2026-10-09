@@ -1,0 +1,22 @@
+Lucide icons
+https://github.com/lucide-icons/lucide
+Commit: a04f228cd01185e09c188b7227b9600c08c565ec
+Selected SVG paths converted to WPF Geometry.
+circle-question-mark
+arrow-left
+refresh-cw
+settings
+house
+activity
+minimize-2
+power
+list
+layout-grid
+chevron-up
+x
+wifi
+timer
+list-checks
+check
+chevron-down
+chevron-right

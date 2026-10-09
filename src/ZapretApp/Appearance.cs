@@ -18,10 +18,10 @@ public static class Appearance
         }
         var values = new Dictionary<string, (string Dark, string Light)>
         {
-            ["Canvas"] = ("#1A222B", "#F2F4F8"), ["Surface"] = ("#222D38", "#FFFFFF"),
-            ["MetricSurface"] = ("#1B2430", "#F5F7FA"),
+            ["Canvas"] = ("#1C2229", "#F2F4F8"), ["Surface"] = ("#252D36", "#FFFFFF"),
+            ["MetricSurface"] = ("#20262F", "#F5F7FA"),
             ["Text"] = ("#F1F5FC", "#202B3D"), ["Muted"] = ("#A6B5C9", "#617087"),
-            ["Border"] = ("#344151", "#DFE5EE"), ["Button"] = ("#2C394A", "#E7ECF4"),
+            ["Border"] = ("#37414E", "#DFE5EE"), ["Button"] = ("#303A47", "#E7ECF4"),
             ["Accent"] = ("#147BF1", "#256ED0"), ["AccentText"] = ("#FFFFFF", "#FFFFFF"),
             ["RowHover"] = ("#29384A", "#F0F5FD"), ["RowSelected"] = ("#263F60", "#E5EFFF"),
             ["RowActive"] = ("#223A34", "#EAF7EF"), ["RowActiveText"] = ("#96E5B5", "#237046"),
@@ -40,8 +40,8 @@ public static class Appearance
             brush.Freeze(); window.Resources[pair.Key] = brush;
         }
         var card = new LinearGradientBrush(
-            (Color)ColorConverter.ConvertFromString(dark ? "#283544" : "#FFFFFF"),
-            (Color)ColorConverter.ConvertFromString(dark ? "#202A36" : "#F7FAFE"), new Point(0, 0), new Point(1, 1));
+            (Color)ColorConverter.ConvertFromString(dark ? "#29313C" : "#FFFFFF"),
+            (Color)ColorConverter.ConvertFromString(dark ? "#252D36" : "#F7FAFE"), new Point(0, 0), new Point(1, 1));
         card.Freeze(); window.Resources["CardActive"] = card;
         var primary = new LinearGradientBrush((Color)ColorConverter.ConvertFromString(dark ? "#168CFF" : "#3488E8"),
             (Color)ColorConverter.ConvertFromString(dark ? "#0868DF" : "#1D65C7"), new Point(0, 0), new Point(0, 1));
