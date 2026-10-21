@@ -419,6 +419,18 @@ public static class SelfTest
         Assert(latestNotes.Contains("ALT11") && latestNotes.Contains("GameFilter-TCP") && latestNotes.Contains("Happ") && !latestNotes.Contains("@V3nilla"), "Russian upstream technical details are retained");
         Assert(ReleaseNotesRu.Summarize("Updated strategies\nImproved diagnostics").Contains("Обновлены стратегии"), "known English changes have a Russian summary");
         messages.Add("PASS: Russian release summary preserves technical changes and excludes contributor noise");
+        var engineNotes = "* Изменен TLS фейк в ALT12\n* Новые фейки TLS+QUIC\n* Обновлен IPSet\n* Добавлен детект Happ в диагностике\n* Улучшена диагностика DNS\n* Добавлен новый неизвестный механизм";
+        var explained = ReleaseNotesRu.ForEngine(engineNotes, "none");
+        Assert(explained.Contains("ALT12") && explained.Contains("не означает, что все они включены") && explained.Contains("список IP-адресов не используется"), "engine changes explain strategy and IPSet applicability");
+        Assert(explained.Contains("Happ: проверка службы уже встроена") && explained.Contains("не добавляются автоматически") && explained.Contains("применимость в Razret не подтверждена"), "engine changes separate supported diagnostics, external tools and unknown features");
+        Assert(ReleaseNotesRu.ForEngine(engineNotes, "loaded").Contains("будет использоваться") && ReleaseNotesRu.ForEngine(engineNotes, "any").Contains("список не ограничивает"), "engine notes follow current IPSet mode");
+        Assert(!ReleaseNotesRu.ForEngine("* Улучшена диагностика Happ", "none").Contains("уже встроена"), "unknown future Happ diagnostics are not claimed as implemented");
+        Assert(!ReleaseNotesRu.ForEngine("* Обновлена служба winws", "none").Contains("Изменения стратегий и компонентов по описанию"), "service changes do not become automatic GUI features");
+        Assert(HappDiagnostics.Describe(new(null, 1060)).Contains("не установлена") && HappDiagnostics.Describe(new(1)).Contains("остановлена"), "Happ absent and stopped states are distinct");
+        Assert(HappDiagnostics.Describe(new(4)).Contains("не доказывает конфликт") && HappDiagnostics.Describe(new(2)).Contains("переходном"), "running Happ is advisory, pending state is not stopped");
+        Assert(HappDiagnostics.Describe(new(null, 5)).Contains("не удалось") && HappDiagnostics.Describe(new(null)).Contains("неизвестно"), "Happ query errors never report a clean system");
+        Assert(!string.IsNullOrWhiteSpace(HappDiagnostics.Describe(HappDiagnostics.Check())), "real Windows service query completes without changing services");
+        messages.Add("PASS: contextual engine notes and read-only Happ diagnostics, including absent, stopped, running and error states");
         var taskXml = System.Xml.Linq.XDocument.Parse(Startup.DefinitionXml());
         var ns = taskXml.Root!.Name.Namespace;
         Assert(taskXml.Descendants(ns + "RunLevel").Single().Value == "HighestAvailable", "elevated autostart");

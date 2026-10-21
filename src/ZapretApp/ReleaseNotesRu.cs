@@ -4,6 +4,43 @@ namespace ZapretApp;
 
 public static class ReleaseNotesRu
 {
+    public static string ForEngine(string notes, string ipsetMode)
+    {
+        var direct = new List<string>();
+        var external = new List<string>();
+        var unconfirmed = new List<string>();
+        bool happ = false, ipset = false;
+        foreach (var line in Summarize(notes).Split("\n\n"))
+        {
+            if (!line.StartsWith("• ")) continue;
+            var s = line[2..];
+            if (Regex.IsMatch(s, @"(?i)Happ") && Regex.IsMatch(s, @"(?i)детект|обнаруж|detect")) { happ = true; continue; }
+            if (Regex.IsMatch(s, @"(?i)диагност|service\.bat|меню|интерфейс|\bhosts\b|\bDNS\b|служб|авто.?обновлен"))
+                external.Add(line);
+            else if (Regex.IsMatch(s, @"(?i)IPSet|списк.*IP")) { ipset = true; direct.Add(line); }
+            else if (Regex.IsMatch(s, @"(?i)стратег|strateg|\bTLS\b|\bQUIC\b|фейк|\bwinws\b|движ|GameFilter|HTTP|списк.*домен"))
+                direct.Add(line);
+            else unconfirmed.Add(line);
+        }
+        var sections = new List<string> {
+            "Razret скачивает официальный комплект целиком: движок, стратегии, списки и файлы TLS/QUIC. Поддерживаемые стратегии и их файлы применяются при запуске без отдельного обновления Razret. Если формат стратегии несовместим, установка отменяется и прежний комплект сохраняется."
+        };
+        if (direct.Count > 0) sections.Add("Изменения стратегий и компонентов по описанию автора:\n" + string.Join("\n", direct));
+        if (ipset) sections.Add(ipsetMode switch {
+            "loaded" => "IPSet: обновлённый список будет использоваться в режиме «Адреса из списка проекта».",
+            "any" => "IPSet: файл обновится, но сейчас выбран режим «Все адреса» — список не ограничивает обработку.",
+            _ => "IPSet: файл обновится, но сейчас выбран режим «Только домены» — список IP-адресов не используется."
+        });
+        if (direct.Any(s => Regex.IsMatch(s, @"(?i)фейк|\bTLS\b|\bQUIC\b")))
+            sections.Add("Файлы TLS/QUIC используются по параметрам выбранной стратегии; наличие новых файлов не означает, что все они включены одновременно.");
+        if (happ) sections.Add("Happ: проверка службы уже встроена в этот Razret. Откройте «Настройки → Дополнительно → Диагностика». Обновление zapret не меняет код нашей диагностики.");
+        if (external.Count > 0) sections.Add("Изменения утилит автора (не добавляются автоматически в функции Razret):\n" + string.Join("\n", external));
+        if (unconfirmed.Count > 0) sections.Add("Другие изменения автора — применимость в Razret не подтверждена:\n" + string.Join("\n", unconfirmed));
+        if (direct.Count + external.Count + unconfirmed.Count == 0 && !happ) sections.Add(Summarize(notes));
+        sections.Add("Новые команды меню, системные настройки и новые проверки автора могут требовать обновления Razret. Полное исходное описание — на GitHub.");
+        return string.Join("\n\n", sections);
+    }
+
     // No translation service or account is required. Unknown English prose is omitted,
     // rather than presenting an invented translation as the author's release notes.
     public static string Summarize(string notes)

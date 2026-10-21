@@ -7,18 +7,18 @@ $stage = Join-Path $PSScriptRoot "build/release-$version"
 $portable = Join-Path $PSScriptRoot "dist/Razret-$version-win-x64"
 if (Test-Path -LiteralPath $portable) { throw "Output already exists: $portable. Move it aside before rebuilding a release." }
 if (!$EnginePath) {
-    $archive = Join-Path $PSScriptRoot 'downloads/zapret-discord-youtube-1.10.3.zip'
+    $archive = Join-Path $PSScriptRoot 'downloads/zapret-discord-youtube-1.10.4.zip'
     New-Item -ItemType Directory -Path (Split-Path $archive) -Force | Out-Null
     if (!(Test-Path -LiteralPath $archive)) {
-        Invoke-WebRequest 'https://github.com/Flowseal/zapret-discord-youtube/releases/download/1.10.3/zapret-discord-youtube-1.10.3.zip' -OutFile $archive
+        Invoke-WebRequest 'https://github.com/Flowseal/zapret-discord-youtube/releases/download/1.10.4/zapret-discord-youtube-1.10.4.zip' -OutFile $archive
     }
-    if ((Get-FileHash -LiteralPath $archive).Hash -ne '244314AE1C24538A0D751601DA8E0C925C843371EEC4456EB15F14C4FD6B7058') { throw 'Upstream archive checksum mismatch.' }
+    if ((Get-FileHash -LiteralPath $archive).Hash -ne '291AF673BD0238506F9548E0E94CA0ABF244000F4C9A06960544FB01C5F97B34') { throw 'Upstream archive checksum mismatch.' }
     $extract = Join-Path $PSScriptRoot ('build/engine-' + [guid]::NewGuid().ToString('N'))
     Expand-Archive -LiteralPath $archive -DestinationPath $extract
     $roots = @(Get-ChildItem -LiteralPath $extract -Filter service.bat -File -Recurse)
     if ($roots.Count -ne 1) { throw 'Unexpected upstream archive layout.' }
     $EnginePath = $roots[0].DirectoryName
-    Set-Content -LiteralPath (Join-Path $EnginePath 'version.txt') -Value '1.10.3' -Encoding utf8
+    Set-Content -LiteralPath (Join-Path $EnginePath 'version.txt') -Value '1.10.4' -Encoding utf8
 }
 & $Dotnet publish "$PSScriptRoot/src/ZapretApp/ZapretApp.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true "-p:UpdateRepository=$Repository" -o $stage
 if ($LASTEXITCODE) { throw 'Publish failed.' }

@@ -470,12 +470,14 @@ public partial class MainWindow : Window
     async Task Diagnose(CancellationToken ct)
     {
         Strategies.Validate(Store.Engine);
+        var happ = await Task.Run(HappDiagnostics.Check, ct);
         var conflicts = engine.Conflicts();
         using var bfe = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\BFE");
         using var proxy = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings");
         using var zapret = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\zapret");
         var info = new List<string> { $"Комплект {Updater.Version}: корректен, стратегий {Strategies.List(Store.Engine).Length}", $"Права администратора: {(Engine.Admin ? "есть" : "нужны для запуска")}", $"Чужие winws: {(conflicts.Length == 0 ? "не обнаружены" : string.Join(", ", conflicts))}", $"Существующая служба zapret: {(zapret == null ? "нет" : "есть — автоматически не изменяется")}", $"BFE зарегистрирована: {bfe != null}", $"Системный прокси включён: {Equals(proxy?.GetValue("ProxyEnable"), 1)}", "Проверки выполняются напрямую, без системного HTTP-прокси.", "Не изменяем TCP timestamps, hosts, DNS, службы и кэш Discord." };
         ct.ThrowIfCancellationRequested();
+        info.Add(HappDiagnostics.Describe(happ));
         using var query = Process.Start(new ProcessStartInfo("sc.exe", "query BFE") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true });
         if (query != null) { var output = await query.StandardOutput.ReadToEndAsync(ct); await query.WaitForExitAsync(ct); info.Add("BFE:\n" + output.Trim()); }
         DiagnosticsText.Text = string.Join("\n\n", info);
@@ -673,7 +675,7 @@ public partial class MainWindow : Window
         UpdateBadge.ToolTip = available ? "Доступно обновление движка обхода. Открыть изменения и установку." : "Движок обхода актуален. Открыть обновления.";
         UpdateBadge.SetResourceReference(Control.BackgroundProperty, available ? "Notice" : "Button");
         UpdateText.Text = available ? $"Доступна версия {release.Version}. Сохраним ваши списки и предыдущую версию." : $"Установлена актуальная версия {release.Version}.";
-        ReleaseNotes.Text = ReleaseNotesRu.Summarize(release.Notes);
+        ReleaseNotes.Text = ReleaseNotesRu.ForEngine(release.Notes, settings.Ipset);
         LaterButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
         LaterButton.Content = "Позже";
         UpdateButton.IsEnabled = operation == null && available;
