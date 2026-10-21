@@ -36,11 +36,29 @@ export function validateLabel(input) {
   return { TesterId:input.TesterId.toLowerCase(), Name:input.Name.trim() };
 }
 export function supportCode(id) { return 'RZ-'+id.replaceAll('-','').slice(0,12).toUpperCase(); }
-export function summarize(reports, includeTesters = true) {
-  const strategies = new Map(), failures = new Map(), updates = new Map(), versions = new Map(), problems = new Map(), testerReports = new Map();
+// Adoption baseline requested for this release. Newer versions also confirm it.
+export const targetAppVersion = '0.7.11';
+function compareVersions(a,b) {
+  const left=a.split('.').map(Number),right=b.split('.').map(Number);
+  for(let i=0;i<3;i++)if(left[i]!==right[i])return left[i]-right[i];
+  return 0;
+}
+export function latestConfirmation(reports, target = targetAppVersion) {
+  const dated=reports.filter(r=>version.test(r.AppVersion??'')&&/^\d{4}-\d{2}-\d{2}$/.test(r.Day??''));
+  if(!dated.length)return {day:null,versions:[],status:'awaiting',targetConfirmed:false};
+  const day=dated.reduce((latest,r)=>r.Day>latest?r.Day:latest,'');
+  const versions=[...new Set(dated.filter(r=>r.Day===day).map(r=>r.AppVersion))].sort(compareVersions);
+  const confirmed=versions.filter(v=>compareVersions(v,target)>=0).length;
+  return {day,versions,status:versions.length>1?'mixed':confirmed?'confirmed':'awaiting',targetConfirmed:confirmed>0};
+}
+export function summarize(reports, includeTesters = true, versionReports = reports) {
+  const strategies = new Map(), failures = new Map(), updates = new Map(), versions = new Map(), problems = new Map(), testerReports = new Map(), currentTesterReports = new Map();
   let tests = 0, passed = 0, errorCount = 0;
+  if(includeTesters)for(const report of versionReports){
+    if(report.TesterId){const group=testerReports.get(report.TesterId)??[];group.push(report);testerReports.set(report.TesterId,group);}
+  }
   for (const report of reports) {
-    if (report.TesterId && includeTesters) { const group=testerReports.get(report.TesterId)??[];group.push(report);testerReports.set(report.TesterId,group); }
+    if(includeTesters&&report.TesterId){const group=currentTesterReports.get(report.TesterId)??[];group.push(report);currentTesterReports.set(report.TesterId,group);}
     const v = report.AppVersion + ' / ' + report.EngineVersion;
     versions.set(v, (versions.get(v) ?? 0) + 1);
     for (const m of report.Metrics) {
@@ -69,5 +87,5 @@ export function summarize(reports, includeTesters = true) {
     failures: [...failures].map(([category, count]) => ({ category, count })).sort((a,b)=>b.count-a.count),
     updates: [...updates.values()], versions: [...versions].map(([version, reports]) => ({ version, reports })).sort((a,b)=>b.reports-a.reports),
     problems:[...problems.values()].sort((a,b)=>b.count-a.count),
-    ...(includeTesters ? {testers:[...testerReports].map(([id,list])=>({id,code:supportCode(id),...summarize(list,false)})).sort((a,b)=>b.errors-a.errors || (b.tests-b.passed)-(a.tests-a.passed)),anonymousReports:reports.filter(r=>!r.TesterId).length} : {}) };
+    ...(includeTesters ? {targetAppVersion,testers:[...testerReports].map(([id,list])=>({id,code:supportCode(id),...summarize(currentTesterReports.get(id)??[],false),versionConfirmation:latestConfirmation(list)})).sort((a,b)=>b.errors-a.errors || (b.tests-b.passed)-(a.tests-a.passed)),anonymousReports:reports.filter(r=>!r.TesterId).length} : {}) };
 }

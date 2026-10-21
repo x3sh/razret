@@ -55,7 +55,9 @@ export default async function handler(req,res) {
     }
     if (route === '/api/summary' && req.method === 'GET') {
       if (!sessionValid(req)) return reply(401,{error:'Требуется вход.'});
-      const {reports,truncated}=await readReports(30);const data=summarize(reports);
+      const {reports,truncated}=await readReports(90);
+      const cutoff=new Date(Date.now()-30*86400000).toISOString().slice(0,10);
+      const data=summarize(reports.filter(r=>r.Day>=cutoff),true,reports);
       const labels=await readLabels(data.testers.map(t=>t.id));data.testers.forEach(t=>t.name=labels[t.id]??'');
       return reply(200,{...data,truncated});
     }

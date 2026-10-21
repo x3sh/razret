@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import handler from '../api/index.js';
-import { validateReport, summarize } from '../lib/protocol.js';
+import { validateReport, summarize, latestConfirmation } from '../lib/protocol.js';
+import { saveReport } from '../lib/storage.js';
 function report(){return { Schema:1,ReportId:randomUUID(),Day:new Date().toISOString().slice(0,10),AppVersion:'0.7.3',EngineVersion:'1.10.3',Metrics:[{Kind:'strategy_test',Outcome:'success',Strategy:'general.bat',Count:2}] };}
 test('protocol rejects identifiers, precise times, raw messages, paths and invalid counts',()=>{
   assert.equal(validateReport(report()).Metrics[0].Count,2);
@@ -49,5 +50,35 @@ test('collection is idempotent and dashboard requires authenticated session',asy
     assert.equal((await request('tester-label',{method:'POST',body:JSON.stringify({TesterId:tester.TesterId,Name:'QA tester'})})).status,401);
     assert.equal((await request('tester-label',{method:'POST',headers:{Cookie:cookie},body:JSON.stringify({TesterId:tester.TesterId,Name:'QA tester'})})).status,200);
     const labeled=await (await request('summary',{headers:{Cookie:cookie}})).json();assert.equal(labeled.testers[0].name,'QA tester');
+    assert.deepEqual(labeled.testers[0].versionConfirmation.versions,['0.7.3']);
+    assert.equal(labeled.testers[0].versionConfirmation.status,'awaiting');
+    const historicalDay=new Date(Date.now()-40*86400000),historical={...report(),Schema:2,TesterId:randomUUID(),Day:historicalDay.toISOString().slice(0,10),AppVersion:'0.7.11'};
+    await saveReport(validateReport(historical,historicalDay));
+    const withHistory=await (await request('summary',{headers:{Cookie:cookie}})).json();
+    const inactive=withHistory.testers.find(t=>t.id===historical.TesterId);
+    assert.equal(inactive.versionConfirmation.status,'confirmed');assert.equal(inactive.tests,0);
+    assert.equal(withHistory.tests,labeled.tests);assert.equal(withHistory.reports,labeled.reports);
   }finally{await new Promise(resolve=>server.close(resolve));await rm(root,{recursive:true,force:true});delete process.env.RAZRET_LOCAL_DATA;}
+});
+
+test('version confirmation uses report day, not upload order or historical report counts',()=>{
+  const sample=(day,app)=>({...report(),Day:day,AppVersion:app});
+  const earlier=sample('2026-10-20','0.7.9'),latest=sample('2026-10-21','0.7.11');
+  const result=latestConfirmation([latest,earlier,earlier,earlier]);
+  assert.equal(result.day,'2026-10-21');assert.deepEqual(result.versions,['0.7.11']);assert.equal(result.status,'confirmed');
+  assert.deepEqual(latestConfirmation([earlier,latest]),result);
+  assert.equal(latestConfirmation([sample('2026-10-21','0.7.9')]).status,'awaiting');
+  assert.equal(latestConfirmation([sample('2026-10-21','0.7.12')]).status,'confirmed');
+  assert.equal(latestConfirmation([sample('2026-10-21','0.7.100')]).status,'confirmed');
+  assert.equal(latestConfirmation([sample('2026-10-20','0.7.11'),sample('2026-10-21','0.7.9')]).status,'awaiting');
+});
+test('same-day versions stay ambiguous and downloads never confirm the target app version',()=>{
+  const older={...report(),AppVersion:'0.7.9'},newer={...report(),AppVersion:'0.7.11'};
+  const mixed=latestConfirmation([newer,older]);
+  assert.equal(mixed.status,'mixed');assert.equal(mixed.targetConfirmed,true);assert.deepEqual(mixed.versions,['0.7.9','0.7.11']);
+  assert.deepEqual(latestConfirmation([older,newer]),mixed);
+  assert.equal(latestConfirmation([older,{...older}]).status,'awaiting');
+  older.Metrics=[{Kind:'app_download',Outcome:'success',TargetVersion:'0.7.11',Count:1}];
+  assert.equal(latestConfirmation([older]).status,'awaiting');
+  assert.equal(latestConfirmation([]).status,'awaiting');
 });
