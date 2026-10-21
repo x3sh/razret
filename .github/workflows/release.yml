@@ -20,6 +20,19 @@ jobs:
       - name: Build, verify and package
         shell: pwsh
         run: ./release.ps1 -Repository '${{ github.repository }}'
+      - name: Verify real downloads and installer on clean Windows
+        shell: pwsh
+        run: |
+          [xml]$project = Get-Content src/ZapretApp/ZapretApp.csproj
+          $version = $project.Project.PropertyGroup.Version
+          dotnet build tests/UpdateIntegration/UpdateIntegration.csproj -c Release -o build/update-integration-check
+          if ($LASTEXITCODE) { throw 'Integration build failed.' }
+          dotnet build/update-integration-check/UpdateIntegration.dll "$PWD/research/ci-updates" --live
+          if ($LASTEXITCODE) { throw 'Real update download checks failed.' }
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe "/out:$PWD\build\update-integration-check\RestartFixture.exe" "$PWD\tests\UpdateIntegration\RestartFixture.cs.txt"
+          if ($LASTEXITCODE) { throw 'Restart fixture build failed.' }
+          dotnet build/update-integration-check/UpdateIntegration.dll "$PWD/research/ci-updates" --helper "$PWD/build/release-$version/Razret.exe" "$PWD/build/update-integration-check/RestartFixture.exe"
+          if ($LASTEXITCODE) { throw 'Self-contained installer checks failed.' }
       - name: Publish release
         shell: pwsh
         env:

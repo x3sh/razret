@@ -34,7 +34,8 @@ if (args.Contains("--live"))
     var oldEngine = Updater.Swap(engineCandidate);
     Check(Updater.Version == engineRelease.Version && SHA256.HashData(File.ReadAllBytes(target)).SequenceEqual(appBefore), "Real upstream engine installs independently of app version");
     Preserved();
-    Check(ReleaseNotesRu.Summarize(engineRelease.Notes).Contains("TLS"), "Russian upstream changes available to UI");
+    var engineNotes = ReleaseNotesRu.ForEngine(engineRelease.Notes, "none");
+    Check(engineNotes.Contains("TLS") && engineNotes.Contains("не используется") && engineNotes.Contains("не меняет код нашей диагностики"), "Engine notes explain strategy files, inactive IPSet and local Happ diagnostics");
     Updater.Rollback(oldEngine);
     Check(Updater.Version == "1.10.3", "Engine rollback restores previous version");
     Preserved();
@@ -42,7 +43,7 @@ if (args.Contains("--live"))
     bool stopped = false;
     try { await AppUpdater.Stage(appRelease, cancelled.Token); } catch (OperationCanceledException) { stopped = true; }
     Check(stopped && SHA256.HashData(File.ReadAllBytes(target)).SequenceEqual(appBefore), "Cancelled app download leaves installed EXE unchanged");
-    File.WriteAllText(Path.Combine(reportRoot, "live-versions.json"), JsonSerializer.Serialize(new { App = appRelease.Version, Engine = engineRelease.Version, Notes = ReleaseNotesRu.Summarize(engineRelease.Notes) }, Store.Json));
+    File.WriteAllText(Path.Combine(reportRoot, "live-versions.json"), JsonSerializer.Serialize(new { App = appRelease.Version, Engine = engineRelease.Version, Notes = engineNotes }, Store.Json));
 }
 else if (Array.IndexOf(args, "--helper") is var helperIndex && helperIndex >= 0)
 {
