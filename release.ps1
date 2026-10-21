@@ -20,7 +20,7 @@ if (!$EnginePath) {
     $EnginePath = $roots[0].DirectoryName
     Set-Content -LiteralPath (Join-Path $EnginePath 'version.txt') -Value '1.10.3' -Encoding utf8
 }
-& $Dotnet publish "$PSScriptRoot/src/ZapretApp/ZapretApp.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true "-p:UpdateRepository=$Repository" -o $stage
+& $Dotnet publish "$PSScriptRoot/src/ZapretApp/ZapretApp.csproj" -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true "-p:UpdateRepository=$Repository" -o $stage
 if ($LASTEXITCODE) { throw 'Publish failed.' }
 New-Item -ItemType Directory -Path $portable -Force | Out-Null
 Copy-Item -LiteralPath "$stage/Razret.exe" -Destination $portable -Force
@@ -42,12 +42,12 @@ $check = Join-Path $PSScriptRoot 'build/release-check'
 & $Dotnet build "$PSScriptRoot/src/ZapretApp/ZapretApp.csproj" -c Release -o $check
 if ($LASTEXITCODE) { throw 'Verification build failed.' }
 if (!(Test-Path -LiteralPath "$check/engine")) { Copy-Item -LiteralPath $EnginePath -Destination "$check/engine" -Recurse }
-& $Dotnet "$check/Razret.dll" --self-test
-if ($LASTEXITCODE) { throw 'Self-test failed.' }
-& $Dotnet "$check/Razret.dll" --ui-test
-if ($LASTEXITCODE) { throw 'UI test failed.' }
-& $Dotnet "$check/Razret.dll" --statistics-test
-if ($LASTEXITCODE) { throw 'Statistics privacy and delivery test failed.' }
+# Exercise the published self-contained executable, including bundle decompression.
+Copy-Item -LiteralPath "$stage/Razret.exe" -Destination "$check/Razret.exe" -Force
+foreach ($verificationMode in @('--self-test', '--ui-test', '--statistics-test')) {
+    $verificationProcess = Start-Process -FilePath "$check/Razret.exe" -ArgumentList $verificationMode -WorkingDirectory $check -WindowStyle Hidden -Wait -PassThru
+    if ($verificationProcess.ExitCode -ne 0) { throw "Published executable verification failed: $verificationMode" }
+}
 Compress-Archive -LiteralPath "$stage/Razret.exe" -DestinationPath "$PSScriptRoot/dist/Razret-app-update-win-x64.zip" -Force
 Compress-Archive -LiteralPath $portable -DestinationPath "$PSScriptRoot/dist/Razret-$version-win-x64.zip" -Force
 Get-FileHash "$PSScriptRoot/dist/Razret-app-update-win-x64.zip", "$PSScriptRoot/dist/Razret-$version-win-x64.zip" | Format-Table
