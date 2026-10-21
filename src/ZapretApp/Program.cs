@@ -62,6 +62,7 @@ public static class Program
                 {
                     if (args.Contains("--snapshot-settings")) window.Pages.SelectedIndex = 1;
                     if (args.Contains("--snapshot-updates")) { window.PreviewUpdatesState(); window.Pages.SelectedIndex = 2; }
+                    if (args.Contains("--snapshot-updates-current")) { window.PreviewCurrentUpdates(); window.Pages.SelectedIndex = 2; }
                     if (args.Contains("--snapshot-dark")) Appearance.Apply(window, "dark");
                     if (args.Contains("--snapshot-advanced")) { window.Pages.SelectedIndex = 1; window.AdvancedExpander.IsExpanded = true; }
                     if (args.Contains("--snapshot-active")) window.PreviewActiveState();
@@ -135,10 +136,12 @@ public static class SelfTest
         {
             Store.Root = temp + Path.DirectorySeparatorChar;
             Store.Save(new Settings { AutoConnect = false, CheckUpdates = false, CloseToTray = true, Theme = "dark" });
+            Task<Release?> appResponse = Task.FromResult<Release?>(new Release("99.0.0", "https://example.invalid/update.zip", "", 1, "Проверка уведомления"));
+            Task<Release> engineResponse = Task.FromResult(new Release(Updater.Version, "https://example.invalid/engine.zip", "", 1, "Обновлен IPSet"));
             var app = new Application(); var window = new MainWindow(quiet: true,
-                latestAppRelease: _ => Task.FromResult<Release?>(new Release("99.0.0", "https://example.invalid/update.zip", "", 1, "Проверка уведомления")));
+                latestAppRelease: ct => appResponse.WaitAsync(ct), latestEngineRelease: ct => engineResponse.WaitAsync(ct));
             window.Closed += (_, _) => closed = true;
-            window.Loaded += (_, _) => window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+            window.Loaded += (_, _) => window.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(async () =>
             {
                 try
                 {
@@ -152,6 +155,34 @@ public static class SelfTest
                     window.Pages.SelectedIndex = 0;
                     window.DismissAppButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                     Assert(!window.AppUpdateBanner.IsVisible && window.UpdateDot.Visibility == Visibility.Visible && window.AppInstallButton.IsEnabled, "dismissal hides banner but preserves available update");
+                    Assert(window.AppUpdateStatus.Phase == UpdatePhase.Available && window.EngineUpdateStatus.Phase == UpdatePhase.Unknown, "app update status independent of unchecked engine");
+                    var pendingApp = new TaskCompletionSource<Release?>(); appResponse = pendingApp.Task;
+                    window.AppCheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    Assert(window.AppUpdateStatus.Phase == UpdatePhase.Checking && !window.AppInstallButton.IsEnabled, "pending check has visible checking status and prevents concurrent app installation");
+                    pendingApp.SetResult(null); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert(window.AppUpdateStatus.Phase == UpdatePhase.Current && window.AppUpdateStatus.Title.Contains("последняя") && !window.AppInstallButton.IsEnabled, "successful check confirms latest installed app");
+                    appResponse = Task.FromException<Release?>(new IOException("offline fixture"));
+                    window.AppCheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert(window.AppUpdateStatus.Phase == UpdatePhase.CheckFailed && !window.AppUpdateStatus.Title.Contains("последняя"), "offline app check cannot claim latest version");
+                    appResponse = Task.FromResult<Release?>(null);
+                    window.AppCheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    var cancelledApp = new TaskCompletionSource<Release?>(); appResponse = cancelledApp.Task;
+                    window.AppCheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    window.CancelButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert(window.AppUpdateStatus.Phase == UpdatePhase.Current && window.AppCheckButton.IsEnabled, "cancelled app check restores last confirmed status");
+                    window.CheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert(window.EngineUpdateStatus.Phase == UpdatePhase.Current && !window.UpdateButton.IsEnabled, "engine check confirms installed latest version");
+                    engineResponse = Task.FromException<Release>(new IOException("offline fixture"));
+                    window.CheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert(window.EngineUpdateStatus.Phase == UpdatePhase.CheckFailed && window.AppUpdateStatus.Phase == UpdatePhase.Current, "failed engine check changes only engine status");
+                    engineResponse = Task.FromResult(new Release("99.0.0", "https://example.invalid/engine.zip", "", 1, "Обновлен IPSet"));
+                    window.CheckButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    Assert(window.EngineUpdateStatus.Phase == UpdatePhase.Available && window.UpdateButton.IsEnabled, "new engine release has an available status and install action");
                     window.Close(); Assert(!closed && !window.IsVisible, "close hides to tray");
                     window.ShowFromTray(); Assert(window.IsVisible && !closed, "restore from tray");
                     window.Pages.SelectedIndex = 1; window.UpdateLayout(); Assert(window.StartupBox.IsVisible, "settings reachable");
@@ -235,9 +266,15 @@ public static class SelfTest
                         Assert(detailsEnd.X <= ((FrameworkElement)visual.Content).ActualWidth && detailsEnd.Y <= ((FrameworkElement)visual.Content).ActualHeight, "details remain inside window bounds");
                         visual.CloseDetailsButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         Assert(!visual.SelectedExpander.IsOpen && !visual.SelectedExpander.IsVisible, "details close button hides the overlay");
+                        Assert(!visual.SelectedExpander.HasAnimatedProperties && visual.SelectedExpander.Opacity == 1, "closing details cancels fade and resets opacity");
                         visual.DetailsButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         visual.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(visual), Environment.TickCount, System.Windows.Input.Key.Escape) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent });
                         Assert(!visual.SelectedExpander.IsOpen, "Escape dismisses details");
+                        visual.HelpPopup.PlacementTarget = visual.StrategiesToggleButton;
+                        visual.HelpText.Text = "Проверка подсказки"; visual.HelpPopup.IsOpen = true;
+                        Assert(visual.HelpPopup.PopupAnimation == (SystemParameters.ClientAreaAnimation ? System.Windows.Controls.Primitives.PopupAnimation.Fade : System.Windows.Controls.Primitives.PopupAnimation.None), "help animation follows Windows motion setting");
+                        visual.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(visual), Environment.TickCount, System.Windows.Input.Key.Escape) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent });
+                        Assert(!visual.HelpPopup.IsOpen, "Escape closes help popup during opening animation");
                         var expanded = visual.Height;
                         visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
                         Assert(visual.Height < expanded && !visual.ResultsPanel.IsVisible, "collapse reduces height");
@@ -265,6 +302,15 @@ public static class SelfTest
                         var action = visual.AutoButton.TranslatePoint(new Point(visual.AutoButton.ActualWidth, visual.AutoButton.ActualHeight), visual);
                         Assert(action.X < visual.ActualWidth - 12 && action.Y < visual.ActualHeight - 50, "actions fit minimum window");
                         visual.Pages.SelectedIndex = 2; visual.UpdateLayout();
+                        visual.PreviewCurrentUpdates(); visual.UpdateLayout();
+                        Assert(visual.AppUpdateStatus.Phase == UpdatePhase.Current && visual.EngineUpdateStatus.Phase == UpdatePhase.Current && !visual.AppInstallButton.IsEnabled && !visual.UpdateButton.IsEnabled, "current releases have explicit status and no install action");
+                        Assert(!visual.AppUpdateBanner.IsVisible && !visual.EngineUpdateBanner.IsVisible && visual.UpdateDot.Visibility == Visibility.Collapsed, "current releases clear update notices");
+                        visual.AppUpdateStatus.BringIntoView(); visual.UpdateLayout();
+                        Assert(visual.AppUpdateStatus.ActualHeight >= 40 && visual.AppUpdateStatus.ActualWidth <= visual.AppUpdateSection.ActualWidth - 24, "prominent update status fits narrow window");
+                        Assert(visual.AppInstallButton.Visibility == Visibility.Collapsed && visual.AppChangesHeading.Visibility == Visibility.Collapsed && visual.UpdateButton.Visibility == Visibility.Collapsed, "current versions hide unavailable installation and empty notes");
+                        visual.PreviewUpdatesState(); visual.UpdateLayout();
+                        Assert(visual.UpdatesHeader.ActualHeight >= 34 && visual.UpdatesHeader.TranslatePoint(new Point(), visual).Y >= 0, "update heading remains inside window after status and notice changes");
+                        Assert(visual.AppInstallButton.Visibility == Visibility.Visible && visual.AppChangesHeading.Visibility == Visibility.Visible && visual.UpdateButton.Visibility == Visibility.Visible, "available releases restore installation and release details");
                         visual.AppInstallButton.BringIntoView(); visual.UpdateLayout();
                         Assert(visual.AppInstallButton.ActualWidth <= visual.AppUpdateSection.ActualWidth - 30, "app installation button fits narrow update panel");
                         visual.PreviewBusyState(); visual.UpdateLayout();

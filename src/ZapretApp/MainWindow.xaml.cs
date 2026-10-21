@@ -41,10 +41,13 @@ public partial class MainWindow : Window
     int lastPage;
 
     readonly Func<CancellationToken, Task<Release?>> latestAppRelease;
-    public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
+    readonly Func<CancellationToken, Task<Release>> latestEngineRelease;
+    public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null, Func<CancellationToken, Task<Release>>? latestEngineRelease = null)
     {
         this.latestAppRelease = latestAppRelease ?? AppUpdater.Latest;
+        this.latestEngineRelease = latestEngineRelease ?? Updater.Latest;
         InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; if (SelectedExpander.IsOpen) { CloseDetails(); e.Handled = true; } } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
+        HelpPopup.PopupAnimation = SystemParameters.ClientAreaAnimation ? System.Windows.Controls.Primitives.PopupAnimation.Fade : System.Windows.Controls.Primitives.PopupAnimation.None;
         ResultsGrid.SizeChanged += (_, _) => UpdateTileColumns();
         statistics = new(settings.ShareStatistics && settings.StatisticsConsentVersion >= 2, preview || quiet);
         StatisticsBox.IsChecked = settings.ShareStatistics && settings.StatisticsConsentVersion >= 2;
@@ -445,9 +448,22 @@ public partial class MainWindow : Window
         Progress.IsIndeterminate = scope != "strategy_test";
         operation = new(); SetBusy(true);
         try { await action(operation.Token); }
-        catch (OperationCanceledException) { if (!engine.Running) StatusTitle.Text = "Проверка остановлена"; Footer.Text = "Операция отменена. Предыдущее состояние восстановлено, если оно было активно."; }
-        catch (Exception ex) { if (recordFailure) statistics.Failure(ex, failureStrategy ?? settings.Strategy, scope); if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
+        catch (OperationCanceledException) { InterruptedUpdate(scope, false); if (!engine.Running) StatusTitle.Text = "Проверка остановлена"; Footer.Text = "Операция отменена. Предыдущее состояние восстановлено, если оно было активно."; }
+        catch (Exception ex) { InterruptedUpdate(scope, true); if (recordFailure) statistics.Failure(ex, failureStrategy ?? settings.Strategy, scope); if (!engine.Running) StatusTitle.Text = "Нужно ваше внимание"; Footer.Text = ex.Message; Store.Log(ex.ToString()); MessageBox.Show(this, ex.Message, "Не удалось завершить", MessageBoxButton.OK, MessageBoxImage.Information); }
         finally { operation.Dispose(); operation = null; SetBusy(false); Progress.IsIndeterminate = false; Progress.Visibility = Visibility.Collapsed; if (allowExit) _ = Dispatcher.BeginInvoke(new Action(Close)); Refresh(); wasRunning = engine.Running; ToggleButton.Content = engine.Running ? "Отключить" : "Включить"; UpdateActive(); _ = statistics.Flush(lifetime.Token); }
+    }
+    void InterruptedUpdate(string scope, bool failed)
+    {
+        if (scope == "app_install")
+        {
+            AppUpdateStatus.Set(failed ? UpdatePhase.InstallFailed : appRelease != null ? UpdatePhase.Available : UpdatePhase.Unknown);
+            AppUpdateText.Text = failed ? "Обновление не установлено. Текущая версия приложения сохранена; можно повторить установку." : "Обновление отменено. Текущая версия приложения сохранена.";
+        }
+        if (scope == "engine_install")
+        {
+            EngineUpdateStatus.Set(failed ? UpdatePhase.InstallFailed : release != null ? (release.Version == Updater.Version ? UpdatePhase.Current : UpdatePhase.Available) : UpdatePhase.Unknown);
+            UpdateText.Text = failed ? "Обновление не установлено. Прежний комплект сохранён; можно повторить установку." : "Обновление отменено. Прежний комплект сохранён.";
+        }
     }
     void SetBusy(bool busy)
     {
@@ -488,11 +504,14 @@ public partial class MainWindow : Window
     async Task CheckAppUpdate(CancellationToken ct = default)
     {
         if (appCheckRunning || lifetime.IsCancellationRequested) return;
+        var previousPhase = AppUpdateStatus.Phase;
         appCheckRunning = true;
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, lifetime.Token);
         AppCheckButton.IsEnabled = false;
+        AppInstallButton.IsEnabled = false;
         try
         {
+            AppUpdateStatus.Set(UpdatePhase.Checking);
             AppUpdateText.Text = "Проверяем обновления Razret…";
             appRelease = await latestAppRelease(linked.Token);
             linked.Token.ThrowIfCancellationRequested();
@@ -500,6 +519,8 @@ public partial class MainWindow : Window
                 : appRelease == null ? "Razret " + AppUpdater.Version + " — новых выпусков нет."
                 : "Доступен Razret " + appRelease.Version + ". Настройки и выбранная стратегия сохранятся. После установки приложение перезапустится.";
             AppReleaseNotes.Text = appRelease == null ? "" : ReleaseNotesRu.Summarize(appRelease.Notes);
+            AppUpdateStatus.Set(!AppUpdater.Configured ? UpdatePhase.Unconfigured : appRelease == null ? UpdatePhase.Current : UpdatePhase.Available);
+            ShowAppReleaseDetails();
             ShowUpdateNotices();
             if (appRelease != null && notifiedAppVersion != appRelease.Version)
             {
@@ -507,12 +528,17 @@ public partial class MainWindow : Window
                 if (!quiet) tray?.UpdateAvailable(appRelease.Version, () => Dispatcher.Invoke(() => { ShowFromTray(); Pages.SelectedIndex = 2; }));
             }
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-        catch (Exception ex) { AppUpdateText.Text = "Не удалось проверить обновления Razret. Можно повторить позже. " + ex.Message; }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { AppUpdateStatus.Set(previousPhase); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { AppUpdateStatus.Set(previousPhase); throw; }
+        catch (Exception ex) { AppUpdateStatus.Set(UpdatePhase.CheckFailed); AppUpdateText.Text = "Не удалось проверить обновления Razret. Можно повторить позже. " + ex.Message; }
         finally { appCheckRunning = false; AppCheckButton.IsEnabled = operation == null; AppInstallButton.IsEnabled = operation == null && appRelease != null; }
     }
     async void AppCheckClick(object sender, RoutedEventArgs e) => await Work(CheckAppUpdate);
+    void ShowAppReleaseDetails()
+    {
+        var visibility = appRelease != null ? Visibility.Visible : Visibility.Collapsed;
+        AppInstallButton.Visibility = AppChangesHeading.Visibility = AppReleaseNotes.Visibility = visibility;
+    }
     void AppSourceClick(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo($"https://github.com/{AppUpdater.Repository}/releases/latest") { UseShellExecute = true });
     void EngineSourceClick(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://github.com/Flowseal/zapret-discord-youtube/releases/latest") { UseShellExecute = true });
     void OpenUpdateSection(FrameworkElement section)
@@ -556,11 +582,25 @@ public partial class MainWindow : Window
         AppUpdateText.Text = "Доступен Razret " + appVersion + ". Настройки сохранятся. После установки приложение перезапустится.";
         AppReleaseNotes.Text = ReleaseNotesRu.Summarize(appRelease.Notes);
         AppInstallButton.IsEnabled = true;
+        AppUpdateStatus.Set(UpdatePhase.Available);
+        ShowAppReleaseDetails();
+        ShowRelease();
+    }
+    internal void PreviewCurrentUpdates()
+    {
+        if (!preview) throw new InvalidOperationException("Preview only");
+        appRelease = null;
+        release = new(Updater.Version, "https://example.invalid/engine.zip", "", 1, "Обновлены стратегии TLS/QUIC.\nОбновлен IPSet.\nДобавлен детект Happ в диагностике.");
+        AppUpdateStatus.Set(UpdatePhase.Current);
+        AppUpdateText.Text = "Установлен Razret " + AppUpdater.Version + ". Новых выпусков нет.";
+        AppReleaseNotes.Text = ""; AppInstallButton.IsEnabled = false;
+        ShowAppReleaseDetails();
         ShowRelease();
     }
     async void AppInstallClick(object sender, RoutedEventArgs e) => await Work(async ct =>
     {
         if (appRelease == null) return;
+        AppUpdateStatus.Set(UpdatePhase.Downloading);
         AppUpdateText.Text = "Скачиваем и проверяем Razret…";
         Progress.IsIndeterminate = true;
         string area;
@@ -569,6 +609,7 @@ public partial class MainWindow : Window
         catch (Exception ex) { statistics.Update("app_download", "failure", appRelease.Version, ex); throw; }
         ct.ThrowIfCancellationRequested();
         await statistics.Flush(ct);
+        AppUpdateStatus.Set(UpdatePhase.Installing);
         try { AppUpdater.Launch(area); }
         catch (Exception ex) { statistics.Update("app_install", "failure", appRelease.Version, ex); throw; }
         engine.Stop(); allowExit = true;
@@ -671,6 +712,8 @@ public partial class MainWindow : Window
         if (release == null) return;
         EngineVersionText.Text = Updater.Version;
         bool available = release.Version != Updater.Version;
+        EngineUpdateStatus.Set(available ? UpdatePhase.Available : UpdatePhase.Current);
+        UpdateButton.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
         UpdateBadgeText.Text = available ? (settings.PostponedVersion == release.Version ? "Доступна " : "Новая ") + release.Version : "Движок " + release.Version;
         UpdateBadge.ToolTip = available ? "Доступно обновление движка обхода. Открыть изменения и установку." : "Движок обхода актуален. Открыть обновления.";
         UpdateBadge.SetResourceReference(Control.BackgroundProperty, available ? "Notice" : "Button");
@@ -690,10 +733,12 @@ public partial class MainWindow : Window
     }
     async Task CheckUpdateCore(CancellationToken ct)
     {
+        var previousPhase = EngineUpdateStatus.Phase;
+        EngineUpdateStatus.Set(UpdatePhase.Checking);
         UpdateBadgeText.Text = "Проверяем…";
-        try { release = await Updater.Latest(ct); ShowRelease(); }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception ex) { UpdateBadgeText.Text = "Повторить проверку"; UpdateText.Text = "Проверка недоступна. Установленный комплект сохранён. " + ex.Message; }
+        try { release = await latestEngineRelease(ct); ShowRelease(); }
+        catch (OperationCanceledException) { EngineUpdateStatus.Set(previousPhase); throw; }
+        catch (Exception ex) { EngineUpdateStatus.Set(UpdatePhase.CheckFailed); UpdateBadgeText.Text = "Повторить проверку"; UpdateText.Text = "Проверка недоступна. Установленный комплект сохранён. " + ex.Message; }
     }
     void UpdateBadgeClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 2;
     void LaterClick(object sender, RoutedEventArgs e)
@@ -708,6 +753,7 @@ public partial class MainWindow : Window
     {
         if (release == null || release.Version == Updater.Version) return;
         var previous = engine.Active; string? backup = null;
+        EngineUpdateStatus.Set(UpdatePhase.Downloading);
         Progress.IsIndeterminate = true; UpdateText.Text = "Скачиваем и проверяем архив…";
         string candidate;
         try { candidate = await Updater.Stage(release, ct); statistics.Update("engine_download", "success", release.Version); }
@@ -718,6 +764,7 @@ public partial class MainWindow : Window
         engine.Stop();
         try
         {
+            EngineUpdateStatus.Set(UpdatePhase.Installing);
             UpdateText.Text = "Применяем обновление…"; backup = Updater.Swap(candidate);
             if (settings.Strategy != null && !Strategies.List(Store.Engine).Contains(settings.Strategy)) throw new IOException("В новой версии нет сохранённой стратегии. Сохранена предыдущая версия.");
             if (previous != null)

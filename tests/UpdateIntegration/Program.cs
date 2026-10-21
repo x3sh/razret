@@ -35,7 +35,7 @@ if (args.Contains("--live"))
     Check(Updater.Version == engineRelease.Version && SHA256.HashData(File.ReadAllBytes(target)).SequenceEqual(appBefore), "Real upstream engine installs independently of app version");
     Preserved();
     var engineNotes = ReleaseNotesRu.ForEngine(engineRelease.Notes, "none");
-    Check(engineNotes.Contains("TLS") && engineNotes.Contains("не используется") && engineNotes.Contains("не меняет код нашей диагностики"), "Engine notes explain strategy files, inactive IPSet and local Happ diagnostics");
+    Check(engineNotes.Contains("официальный комплект целиком") && engineNotes.Contains("Полное исходное описание"), "Engine notes explain applicability without claiming unverified functions");
     Updater.Rollback(oldEngine);
     Check(Updater.Version == "1.10.3", "Engine rollback restores previous version");
     Preserved();

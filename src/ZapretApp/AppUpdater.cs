@@ -32,12 +32,14 @@ public static class AppUpdater
         if (!Configured) return null;
         using var client = Client();
         using var response = await client.GetAsync($"https://api.github.com/repos/{Repository}/releases/latest", ct);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) throw new InvalidDataException("Источник обновлений Razret не найден или пока не содержит стабильного выпуска.");
         response.EnsureSuccessStatusCode();
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
         var root = json.RootElement;
         var version = root.GetProperty("tag_name").GetString()!;
-        if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean() || !IsNewer(version)) return null;
+        if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean()
+            || !System.Version.TryParse(version.TrimStart('v'), out _)) throw new InvalidDataException("Источник не вернул проверяемую стабильную версию Razret.");
+        if (!IsNewer(version)) return null;
         var asset = root.GetProperty("assets").EnumerateArray().Single(a => a.GetProperty("name").GetString() == "Razret-app-update-win-x64.zip");
         var url = asset.GetProperty("browser_download_url").GetString()!;
         var digest = asset.TryGetProperty("digest", out var hash) ? hash.GetString() ?? "" : "";
