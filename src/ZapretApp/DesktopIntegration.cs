@@ -57,7 +57,9 @@ public sealed class TrayIcon : IDisposable
     Action? balloonClick;
     public TrayIcon(Action open, Action exit)
     {
-        drawingIcon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "razret.ico"), 32, 32);
+        using var iconStream = typeof(TrayIcon).Assembly.GetManifestResourceStream("Razret.TrayIcon") ?? throw new IOException("Иконка Razret недоступна.");
+        using var embeddedIcon = new System.Drawing.Icon(iconStream, 32, 32);
+        drawingIcon = (System.Drawing.Icon)embeddedIcon.Clone();
         icon = new() { Icon = drawingIcon, Text = "Razret", Visible = true };
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Razret", null, (_, _) => open());

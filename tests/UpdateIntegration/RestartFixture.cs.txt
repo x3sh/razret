@@ -1,0 +1,21 @@
+using System;
+using System.IO;
+using System.Reflection;
+[assembly: AssemblyVersion("99.0.0.0")]
+[assembly: AssemblyFileVersion("99.0.0.0")]
+internal static class RestartFixture
+{
+    [STAThread] private static void Main(string[] args)
+    {
+        if (args.Length == 2 && args[0] == "--hold")
+        {
+            using (var stream = File.Open(args[1], FileMode.Open, FileAccess.Read, FileShare.Read))
+            {
+                File.WriteAllText(args[1] + ".ready", "locked");
+                System.Threading.Thread.Sleep(3000);
+            }
+            return;
+        }
+        File.WriteAllText(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "restarted.txt"), "Restarted successfully");
+    }
+}

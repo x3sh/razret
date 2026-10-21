@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+ <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><Version>0.7.0</Version></PropertyGroup>
+ <ItemGroup><AssemblyMetadata Include="UpdateRepository" Value="x3sh/razret"/></ItemGroup>
+ <ItemGroup><Compile Include="../../src/ZapretApp/AppUpdater.cs"/><Compile Include="../../src/ZapretApp/Updater.cs"/><Compile Include="../../src/ZapretApp/Core.cs"/><Compile Include="../../src/ZapretApp/Statistics.cs"/><Compile Include="../../src/ZapretApp/ReleaseNotesRu.cs"/></ItemGroup>
+</Project>

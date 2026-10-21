@@ -20,6 +20,15 @@ public static class ReleaseNotesRu
             s = Regex.Replace(s, @"(?i)\s+(?:by\s+@|in\s+https://).*", "");
             s = Regex.Replace(s, @"\s+от\s+@[\w-]+", "");
             s = Regex.Replace(s, @"https?://\S+|@[\w-]+|\*\*|`", "");
+            bool russianOriginal = Regex.IsMatch(s, @"[А-Яа-яЁё]");
+            foreach (var (phrase, translated) in new[] {
+                (@"updated? strategies", "Обновлены стратегии"), (@"new strategies", "Новые стратегии"),
+                (@"fixed? Discord connection issues", "Исправлены проблемы подключения Discord"), (@"fixed? connection issues", "Исправлены проблемы подключения"),
+                (@"improved? connection stability", "Улучшена стабильность подключения"),
+                (@"updated? (?:IPSet|IP lists)", "Обновлены списки IP-адресов"),
+                (@"improved? diagnostics", "Улучшена диагностика"),
+                (@"fixed? (?:the )?app updater", "Исправлено обновление приложения") })
+                s = Regex.Replace(s, @"(?i)\b" + phrase + @"\b", translated);
             s = Regex.Replace(s, @"(?i)\bnew strateg(?:y|ies)\b", "Новая стратегия");
             s = Regex.Replace(s, @"(?i)\bupdated?\b", "Обновлено");
             s = Regex.Replace(s, @"(?i)\bfixed?\b", "Исправлено");
@@ -29,11 +38,11 @@ public static class ReleaseNotesRu
             if (s.Length < 3) continue;
             // Allow names and protocol/file identifiers, but never display untranslated prose.
             var prose = Regex.Replace(s, @"(?i)\b(?:Discord|YouTube|Google|Telegram|TCP|UDP|TLS|IPSet|GameFilter|hosts|ALT\d*|SIMPLE|FAKE|EXP|AUTO|QUIC|DPI|ip_id|list-general|list-exclude|ipset-all|service\.bat)\b", "");
-            if (!Regex.IsMatch(s, @"[А-Яа-яЁё]") || Regex.IsMatch(prose, @"[A-Za-z]{2,}")) { omitted = true; continue; }
+            if (!Regex.IsMatch(s, @"[А-Яа-яЁё]") || !russianOriginal && Regex.IsMatch(prose, @"[A-Za-z]{2,}")) { omitted = true; continue; }
             lines.Add("• " + Regex.Replace(s, @"\s+", " ").Trim());
         }
-        var shown = lines.Distinct().Take(7).ToList();
-        if (shown.Count == 0) return "Автор пока не предоставил изменений, которые приложение может надёжно показать по-русски. Можно остаться на установленной версии.";
-        return string.Join("\n\n", shown) + (omitted || lines.Count > 7 ? "\n\nПоказаны основные изменения на русском. Часть подробностей пропущена." : "");
+        var shown = lines.Distinct().Take(12).ToList();
+        if (shown.Count == 0) return string.IsNullOrWhiteSpace(notes) ? "Автор не опубликовал описание изменений этого выпуска." : "Описание автора пока недоступно по-русски. Полный список изменений можно открыть на GitHub.";
+        return string.Join("\n\n", shown) + (omitted || lines.Count > 12 ? "\n\nПоказаны изменения на русском. Полный список — на GitHub." : "");
     }
 }

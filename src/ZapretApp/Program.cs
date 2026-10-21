@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Text;
 using System.Windows;
@@ -65,6 +65,8 @@ public static class Program
                     if (args.Contains("--snapshot-dark")) Appearance.Apply(window, "dark");
                     if (args.Contains("--snapshot-advanced")) { window.Pages.SelectedIndex = 1; window.AdvancedExpander.IsExpanded = true; }
                     if (args.Contains("--snapshot-active")) window.PreviewActiveState();
+                    if (args.Contains("--snapshot-warning")) { window.PreviewActiveState(); window.PreviewMetricState("warning"); }
+                    if (args.Contains("--snapshot-bad")) { window.PreviewActiveState(); window.PreviewMetricState("bad"); }
                     if (args.Contains("--snapshot-light")) { Appearance.Apply(window, "light"); window.PreviewActiveState(); }
                     if (args.Contains("--snapshot-narrow")) { window.Width = 500; window.Height = 620; window.PreviewActiveState(true); }
                     if (args.Contains("--snapshot-other")) window.PreviewActiveState(true);
@@ -84,7 +86,6 @@ public static class Program
                     if (args.Contains("--snapshot-advanced")) { window.AdvancedExpander.BringIntoView(); window.UpdateLayout(); }
                     Store.Write("preview-layout.json", new { window.Width, window.Height, WindowContentHeight = ((FrameworkElement)window.Content).ActualHeight, Elements = new FrameworkElement[] { window.StrategyCard, window.MetricsGrid, window.Pages, window.StrategiesHeader, window.ResultsPanel, window.Footer, window.UpdateBadge, window.FooterSettingsButton }.Select(e => new { e.Name, Width = e.ActualWidth, Height = e.ActualHeight, Y = e.TranslatePoint(new Point(), window).Y, e.IsVisible }) });
                     var content = (FrameworkElement)window.Content;
-                    if (args.Contains("--snapshot-expanded")) { window.SelectedExpander.Child.UpdateLayout(); content = (FrameworkElement)window.SelectedExpander.Child; }
                     if (args.Contains("--snapshot-theme")) { content = (FrameworkElement)((System.Windows.Controls.Primitives.Popup)window.ThemeBox.Template.FindName("PART_Popup", window.ThemeBox)).Child; content.UpdateLayout(); }
                     var bitmap = new RenderTargetBitmap((int)content.ActualWidth, (int)content.ActualHeight, 96, 96, PixelFormats.Pbgra32);
                     bitmap.Render(content); var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
@@ -97,6 +98,9 @@ public static class Program
                     if (args.Contains("--snapshot-narrow")) filename = "preview-narrow.png";
                     if (args.Contains("--snapshot-advanced")) filename = "preview-advanced.png";
                     if (args.Contains("--snapshot-theme")) filename = "preview-theme.png";
+                    if (args.Contains("--snapshot-expanded")) filename = "preview-details.png";
+                    if (args.Contains("--snapshot-warning")) filename = "preview-warning.png";
+                    if (args.Contains("--snapshot-bad")) filename = "preview-bad.png";
                     using (var output = File.Create(Path.Combine(Store.Data, filename))) png.Save(output);
                     Store.Write("preview-metrics.json", new { WorkingSetBytes = System.Diagnostics.Process.GetCurrentProcess().WorkingSet64, PrivateBytes = System.Diagnostics.Process.GetCurrentProcess().PrivateMemorySize64, Note = "UI snapshot, no running bypass, one measurement" });
                     window.Close();
@@ -139,7 +143,7 @@ public static class SelfTest
                 try
                 {
                     Assert(window.AppUpdateBanner.IsVisible, "app notice appears with automatic engine checks disabled");
-                    Assert(window.AppInstallButton.IsEnabled && window.AppReleaseNotes.Text == "Проверка уведомления", "app update waits for explicit installation");
+                    Assert(window.AppInstallButton.IsEnabled && window.AppReleaseNotes.Text.Contains("Проверка уведомления"), "app update waits for explicit installation");
                     Assert(window.AppUpdateBanner.TranslatePoint(new Point(), window).Y < window.StrategyCard.TranslatePoint(new Point(), window).Y, "notice above current strategy");
                     window.AppNotice.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                     Assert(window.Pages.SelectedIndex == 2, "notice opens app updates");
@@ -179,7 +183,7 @@ public static class SelfTest
                         gridScroller.ScrollToTop(); visual.UpdateLayout();
                         Assert(gridScroller.ScrollableHeight > 0 && gridScroller.ComputedVerticalScrollBarVisibility == Visibility.Visible, "short grid gets vertical scrolling");
                         var firstTile = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromIndex(0);
-                        Assert(firstTile.ActualHeight == 58, "tiles retain fixed readable height after resize");
+                        Assert(firstTile.ActualHeight == 54, "tiles retain fixed readable height after resize");
                         var lamp = FindNamedVisual(firstTile, "TileLamp")!;
                         var name = FindNamedVisual(firstTile, "TileName")!;
                         double lampCenter = lamp.TranslatePoint(new Point(0, lamp.ActualHeight / 2), firstTile).Y;
@@ -204,7 +208,15 @@ public static class SelfTest
                         }
                         Assert(visual.ViewModeButton.ToolTip.ToString() == "Показать списком", "tiles offer list alternative");
                         visual.ViewModeButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
-                        Assert(visual.Width == 520, "return to list restores narrow window");
+                        Assert(visual.Width == 460, "return to list restores narrow window");
+                        foreach (var state in new[] { "good", "warning", "bad" })
+                        {
+                            visual.PreviewMetricState(state);
+                            var expected = (SolidColorBrush)visual.Resources[Quality.Brush(state)];
+                            Assert(((SolidColorBrush)visual.CardPing.Foreground).Color == expected.Color && ((SolidColorBrush)visual.CardPingIcon.Stroke).Color == expected.Color, "ping icon and value share quality color");
+                            Assert(((SolidColorBrush)visual.CardResponse.Foreground).Color == expected.Color && ((SolidColorBrush)visual.CardPassedIcon.Stroke).Color == expected.Color, "response and availability quality appear in dashboard");
+                        }
+                        visual.PreviewActiveState(true); visual.UpdateLayout();
                         var last = visual.ResultsGrid.Items[visual.ResultsGrid.Items.Count - 1];
                         visual.ResultsGrid.ScrollIntoView(last); visual.UpdateLayout();
                         var lastRow = (System.Windows.Controls.ListBoxItem)visual.ResultsGrid.ItemContainerGenerator.ContainerFromItem(last);
@@ -213,6 +225,16 @@ public static class SelfTest
                         Assert(!visual.CardCaption.IsVisible && !visual.SelectionStatus.IsVisible && !visual.CardSubtitle.IsVisible, "redundant captions hidden");
                         visual.BackToActiveButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         Assert(((MainWindow.Row)visual.ResultsGrid.SelectedItem).IsActive, "return to active action");
+                        // Details belong to the app and can be closed without clicking the desktop.
+                        visual.DetailsButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
+                        Assert(visual.SelectedExpander.IsOpen && visual.CloseDetailsButton.IsVisible, "details have an explicit close control");
+                        var detailsEnd = visual.DetailsCard.TranslatePoint(new Point(visual.DetailsCard.ActualWidth, visual.DetailsCard.ActualHeight), (UIElement)visual.Content);
+                        Assert(detailsEnd.X <= ((FrameworkElement)visual.Content).ActualWidth && detailsEnd.Y <= ((FrameworkElement)visual.Content).ActualHeight, "details remain inside window bounds");
+                        visual.CloseDetailsButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        Assert(!visual.SelectedExpander.IsOpen && !visual.SelectedExpander.IsVisible, "details close button hides the overlay");
+                        visual.DetailsButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
+                        visual.RaiseEvent(new System.Windows.Input.KeyEventArgs(System.Windows.Input.Keyboard.PrimaryDevice, PresentationSource.FromVisual(visual), Environment.TickCount, System.Windows.Input.Key.Escape) { RoutedEvent = System.Windows.Input.Keyboard.PreviewKeyDownEvent });
+                        Assert(!visual.SelectedExpander.IsOpen, "Escape dismisses details");
                         var expanded = visual.Height;
                         visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent)); visual.UpdateLayout();
                         Assert(visual.Height < expanded && !visual.ResultsPanel.IsVisible, "collapse reduces height");
@@ -235,7 +257,7 @@ public static class SelfTest
                         visual.DismissEngineButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         visual.Pages.SelectedIndex = 0; visual.DismissAppButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
                         visual.StrategiesToggleButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Button.ClickEvent));
-                        visual.Width = 500; visual.Height = 620; visual.UpdateLayout();
+                        visual.Width = 440; visual.Height = 620; visual.UpdateLayout();
                         Assert(visual.ResultsGrid.ActualHeight >= 120, "minimum window retains useful list viewport");
                         var action = visual.AutoButton.TranslatePoint(new Point(visual.AutoButton.ActualWidth, visual.AutoButton.ActualHeight), visual);
                         Assert(action.X < visual.ActualWidth - 12 && action.Y < visual.ActualHeight - 50, "actions fit minimum window");
@@ -319,7 +341,7 @@ public static class SelfTest
         var desktopGrid = StrategyLayout.Grid(1920, 1040, 22);
         Assert(desktopGrid.AllVisible && desktopGrid.Columns == 4, "desktop grid displays every strategy in four columns");
         var laptopGrid = StrategyLayout.Grid(1366, 720, 22);
-        Assert(laptopGrid.AllVisible && laptopGrid.Width <= 1366 && laptopGrid.Height <= 720 && laptopGrid.TileExtent >= 64, "grid adapts to laptop work area without tiny tiles");
+        Assert(laptopGrid.AllVisible && laptopGrid.Width <= 1366 && laptopGrid.Height <= 720 && laptopGrid.TileExtent >= 60, "grid adapts to laptop work area without tiny tiles");
         var limitedGrid = StrategyLayout.Grid(800, 540, 22);
         Assert(!limitedGrid.AllVisible && limitedGrid.Width <= 800 && limitedGrid.Height <= 540, "small work area gets a reachable fallback rather than clipped strategies");
         foreach (var scale in new[] { 1.0, 1.25, 1.5 })
@@ -356,6 +378,13 @@ public static class SelfTest
         var testedRow = MainWindow.Row.From(rowResult.Name, rowResult, rowResult.Name, rowResult.Name);
         Assert(testedRow.Discord == "✓" && testedRow.Youtube == "✕" && testedRow.Marker == "● активна" && testedRow.Ping == "6 мс", "per-service display and active state");
         messages.Add("PASS: active strategy, per-service marks and separate ping display");
+        Assert(Quality.Ping(rowResult) == "good" && Quality.Response(rowResult) == "good" && Quality.Checks(rowResult) == "warning", "metrics assess latency separately from availability");
+        Assert(Quality.Ping(rowResult with { Probes = rowResult.Probes.Select(p => p with { Ping = 100 }).ToList() }) == "warning", "intermediate ping is amber");
+        Assert(Quality.Ping(rowResult with { Probes = rowResult.Probes.Select(p => p with { Ping = 200 }).ToList() }) == "bad", "slow ping is red");
+        Assert(Quality.Response(rowResult with { Probes = rowResult.Probes.Select(p => p with { Milliseconds = 900 }).ToList() }) == "warning", "intermediate response is amber");
+        Assert(Quality.Response(rowResult with { Probes = rowResult.Probes.Select(p => p with { Milliseconds = 2000 }).ToList() }) == "bad", "slow response is red");
+        Assert(Quality.Checks(rowResult with { Probes = rowResult.Probes.Select(p => p with { Ok = p.Service != "Discord Gateway" }).ToList() }) == "bad", "unavailable Discord is red even when other probes pass");
+        Assert(Quality.Checks(null) == "unknown" && Quality.Ping(null) == "unknown", "untested metrics are neutral");
         Assert(MainWindow.Row.From("general.bat", rowResult, null, null).TestState == "warning", "partial coverage is orange");
         var allPassed = rowResult with { Probes = rowResult.Probes.Select(p => p with { Ok = true }).ToList() };
         Assert(MainWindow.Row.From("general.bat", allPassed, null, null).TestState == "good", "complete low-latency coverage is green");
@@ -383,7 +412,10 @@ public static class SelfTest
         messages.Add("PASS: fragmented Discord Hello, transient retry, cancellation and app version comparison");
         var notes = ReleaseNotesRu.Summarize("## What's Changed\n* Новая стратегия **ALT13**\n* Улучшение диагностики by @someone in https://github.com/example\n* Added experimental recovery mechanism\n## New Contributors\n* @contributor made their first contribution");
         Assert(notes.Contains("Новая стратегия ALT13") && notes.Contains("Улучшение диагностики") && !notes.Contains("experimental") && !notes.Contains("contribution"), "Russian-only summary");
-        messages.Add("PASS: Russian release summary excludes untranslated prose and contributor noise");
+        var latestNotes = ReleaseNotesRu.Summarize("* Изменен стандартный TLS фейк в **ALT11**, **ALT12**, **EXP**, **SIMPLE FAKE ALT2**\n* Он использовался в HTTP/GameFilter-TCP\n* Обновлен IPSet до последней версии by @V3nilla in https://github.com/example\n* Добавлен детект Happ в диагностике");
+        Assert(latestNotes.Contains("ALT11") && latestNotes.Contains("GameFilter-TCP") && latestNotes.Contains("Happ") && !latestNotes.Contains("@V3nilla"), "Russian upstream technical details are retained");
+        Assert(ReleaseNotesRu.Summarize("Updated strategies\nImproved diagnostics").Contains("Обновлены стратегии"), "known English changes have a Russian summary");
+        messages.Add("PASS: Russian release summary preserves technical changes and excludes contributor noise");
         var taskXml = System.Xml.Linq.XDocument.Parse(Startup.DefinitionXml());
         var ns = taskXml.Root!.Name.Namespace;
         Assert(taskXml.Descendants(ns + "RunLevel").Single().Value == "HighestAvailable", "elevated autostart");

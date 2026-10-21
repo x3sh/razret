@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
@@ -35,8 +35,8 @@ public partial class MainWindow : Window
     Row? cardProfile;
     internal string? PowerStrategy => cardProfile?.Name;
     bool loadingTheme = true;
-    double expandedHeight = 640;
-    double listWidth = 520;
+    double expandedHeight = 620;
+    double listWidth = 460;
     double gridWidth, gridHeight, lastNoticeHeight;
     int lastPage;
 
@@ -44,7 +44,7 @@ public partial class MainWindow : Window
     public MainWindow(bool preview = false, bool startup = false, bool quiet = false, Func<CancellationToken, Task<Release?>>? latestAppRelease = null)
     {
         this.latestAppRelease = latestAppRelease ?? AppUpdater.Latest;
-        InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; SelectedExpander.IsOpen = false; } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
+        InitializeComponent(); PreviewKeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Escape) { HelpPopup.IsOpen = false; if (SelectedExpander.IsOpen) { CloseDetails(); e.Handled = true; } } }; this.preview = preview; this.quiet = quiet; settings = Store.Load();
         ResultsGrid.SizeChanged += (_, _) => UpdateTileColumns();
         statistics = new(settings.ShareStatistics && settings.StatisticsConsentVersion >= 2, preview || quiet);
         StatisticsBox.IsChecked = settings.ShareStatistics && settings.StatisticsConsentVersion >= 2;
@@ -174,7 +174,7 @@ public partial class MainWindow : Window
         double available = SystemParameters.WorkArea.Height;
         Pages.MinHeight = compact ? 40 : Pages.SelectedIndex == 0 ? 110 : 180;
         bool grid = !compact && Pages.SelectedIndex == 0 && settings.StrategyView == "tiles";
-        MinWidth = Math.Min(SystemParameters.WorkArea.Width, grid ? 600 : 480);
+        MinWidth = Math.Min(SystemParameters.WorkArea.Width, grid ? 520 : 440);
         MinHeight = Math.Min(available, compact ? 250 : 420);
         MaxHeight = compact ? available : double.PositiveInfinity;
         if (WindowState == WindowState.Normal)
@@ -275,18 +275,7 @@ public partial class MainWindow : Window
     public record Row(string Name, string DisplayName, string Marker, string Discord, string Youtube, string Ping, string Response, Result? Result)
     {
         public bool IsActive => Marker == "● активна";
-        public string TestState
-        {
-            get
-            {
-                if (Result == null) return "unknown";
-                var groups = Result.Probes.GroupBy(p => p.Service).ToList();
-                int passed = groups.Count(g => g.All(p => p.Ok));
-                if (groups.Count == 0 || passed * 2 < groups.Count) return "bad";
-                var pings = Result.Probes.Where(p => p.Ping.HasValue).Select(p => p.Ping!.Value).ToArray();
-                return Result.Complete && Result.Delay <= 1500 && (pings.Length == 0 || pings.Average() <= 150) ? "good" : "warning";
-            }
-        }
+        public string TestState => Quality.Overall(Result);
         public string TileServices => $"D {Discord}   Y {Youtube}";
         public string PassedChecks
         {
@@ -297,11 +286,11 @@ public partial class MainWindow : Window
             }
         }
         public string CompactResult => Result == null ? "Не проверена" : $"{PassedChecks} · {Response}";
-        public string TileTip => $"{DisplayName}\nDiscord: {Discord} · YouTube: {Youtube}\nPing: {Ping} · Отклик: {Response}\n" + (TestState switch { "good" => "Все проверки пройдены; ping до 150 мс, отклик до 1500 мс", "warning" => "Часть проверок не прошла или задержка повышена", "bad" => "Большинство проверок не прошло", _ => "Ещё не проверялась" }) + (IsActive ? "\nВключена сейчас" : "") + "\nДвойной щелчок — подробности проверки";
+        public string TileTip => $"{DisplayName}\nDiscord: {Discord} · YouTube: {Youtube}\nПинг: {Ping} · Отклик: {Response}\n" + (TestState switch { "good" => "Все проверки пройдены; пинг до 80 мс, отклик до 500 мс", "warning" => "Часть проверок не прошла или задержка повышена", "bad" => "Недоступен основной сервис или большинство проверок не прошло", _ => "Ещё не проверялась" }) + (IsActive ? "\nВключена сейчас" : "") + "\nДвойной щелчок — подробности проверки";
         public static string ShortName(string name) => System.Text.RegularExpressions.Regex.Replace(name.Replace("general (", "").Replace(").bat", "").Replace("general.bat", "Основная"), @"ALT(\d+)", "ALT $1");
         public static Row From(string name, Result? result, string? active, string? saved)
         {
-            var ping = result?.Probes.Where(p => p.Ping.HasValue).Select(p => p.Ping!.Value).ToArray() ?? [];
+            var ping = result?.Probes.Where(p => p.Ok && p.Ping.HasValue).Select(p => p.Ping!.Value).ToArray() ?? [];
             string Group(string prefix, int count)
             {
                 var probes = result?.Probes.Where(p => p.Service.StartsWith(prefix)).ToList() ?? [];
@@ -313,12 +302,14 @@ public partial class MainWindow : Window
     void StrategySelected(object sender, SelectionChangedEventArgs e)
     {
         if (ResultsGrid.SelectedItem is not Row row) return;
+        SelectedExpander.IsOpen = false;
+        DetailsStrategyName.Text = row.DisplayName;
         var pinned = ResultsGrid.Items.Cast<Row>().FirstOrDefault(r => r.IsActive)
             ?? ResultsGrid.Items.Cast<Row>().FirstOrDefault(r => r.Name == settings.Strategy) ?? row;
         RenderStrategyCard(pinned);
         SelectedProfileText.Text = "Выбрана: " + row.DisplayName + (row.IsActive ? " · работает сейчас" : "");
         SelectedDetails.Text = row.Result == null ? "Проверка ещё не выполнялась." :
-            $"Ping: {row.Ping} · Отклик: {row.Response}\n" + string.Join("\n", row.Result.Probes.GroupBy(p => p.Service).Select(g => $"{(g.All(p => p.Ok) ? "✓" : "✕")} {g.Key} · {g.Average(p => p.Milliseconds):0} мс" + (g.Any(p => !p.Ok) ? " · " + string.Join("; ", g.Where(p => !p.Ok).Select(p => p.Detail).Distinct()) : ""))) +
+            $"Пинг: {row.Ping} · Отклик: {row.Response}\n" + string.Join("\n", row.Result.Probes.GroupBy(p => p.Service).Select(g => $"{(g.All(p => p.Ok) ? "✓" : "✕")} {g.Key} · {g.Average(p => p.Milliseconds):0} мс" + (g.Any(p => !p.Ok) ? " · " + string.Join("; ", g.Where(p => !p.Ok).Select(p => p.Detail).Distinct()) : ""))) +
             "\nПроверка сайтов и соединения Discord. Голос и воспроизведение видео проверяются в самих приложениях.";
         BackToActiveButton.Visibility = !row.IsActive && ResultsGrid.Items.Cast<Row>().Any(r => r.IsActive) ? Visibility.Visible : Visibility.Collapsed;
         ManualButton.Visibility = row.IsActive || row.Name == settings.Strategy ? Visibility.Collapsed : Visibility.Visible;
@@ -345,6 +336,7 @@ public partial class MainWindow : Window
         CardCaption.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardMuted" : "Muted");
         SelectionTitle.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardText" : "Text");
         SelectionTitle.Text = row.DisplayName;
+        SelectionTitle.ToolTip = row.DisplayName;
         ConnectionDot.SetResourceReference(System.Windows.Shapes.Shape.FillProperty, active ? "Good" : "Unknown");
         ConnectionHalo.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
         ToggleButton.SetResourceReference(Control.BackgroundProperty, "Accent");
@@ -366,7 +358,16 @@ public partial class MainWindow : Window
         CardPassed.Text = groups?.Count > 0 ? $"{groups.Count(g => g.All(p => p.Ok))} / {groups.Count}" : "—";
         TestTimestamp.Text = row.Result == null ? "Стратегия ещё не проверялась" : testedAt.HasValue ? $"Последний тест · {testedAt.Value.LocalDateTime:dd.MM, HH:mm}" : "Результаты последнего теста";
         foreach (var label in new[] { CardPingLabel, CardResponseLabel, CardPassedLabel, TestTimestamp }) label.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardMuted" : "Muted");
-        foreach (var metric in new[] { CardPing, CardResponse, CardPassed }) metric.SetResourceReference(TextBlock.ForegroundProperty, active ? "CardText" : "Text");
+        SetMetricColor(CardPing, CardPingIcon, Quality.Ping(row.Result));
+        SetMetricColor(CardResponse, CardResponseIcon, Quality.Response(row.Result));
+        SetMetricColor(CardPassed, CardPassedIcon, Quality.Checks(row.Result));
+    }
+    static void SetMetricColor(TextBlock text, AppIcon icon, string state)
+    {
+        string brush = Quality.Brush(state);
+        text.SetResourceReference(TextBlock.ForegroundProperty, brush);
+        icon.SetResourceReference(AppIcon.StrokeProperty, brush);
+        text.Effect = state == "unknown" ? null : new System.Windows.Media.Effects.DropShadowEffect { Color = ((SolidColorBrush)text.FindResource(brush)).Color, BlurRadius = 6, ShadowDepth = 0, Opacity = 0.14 };
     }
     void ThemeChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -397,17 +398,38 @@ public partial class MainWindow : Window
         SetBusy(true); StatusDetail.Text = "19 из 22 · SIMPLE FAKE ALT";
         Progress.Value = 86; Footer.Text = "";
     }
+    internal void PreviewMetricState(string state)
+    {
+        if (!preview) throw new InvalidOperationException("Preview only");
+        string name = settings.Strategy ?? Strategies.List(Store.Engine)[0];
+        string[] services = ["Discord API", "Discord CDN", "Discord Gateway", "YouTube", "YouTube изображения"];
+        var probes = services.Select(service => new Probe(service,
+            state == "good" || state == "warning" && service != "YouTube изображения" || state == "bad" && service is not ("Discord Gateway" or "YouTube"),
+            state == "good" ? 168 : state == "warning" ? 850 : 1900, "", state == "good" ? 30 : state == "warning" ? 110 : 210)).ToList();
+        RenderStrategyCard(Row.From(name, new Result(name, probes), name, name));
+    }
     void UpdateActive()
     {
         ModeLabel.Text = settings.SetupComplete ? "" : "ПЕРВЫЙ ЗАПУСК";
         tray?.Status(engine.Running);
     }
     void HomeClick(object sender, RoutedEventArgs e) => Pages.SelectedIndex = 0;
-    void DetailsClick(object sender, RoutedEventArgs e) => SelectedExpander.IsOpen = !SelectedExpander.IsOpen;
+    void ToggleDetails()
+    {
+        if (SelectedExpander.IsOpen) CloseDetails();
+        else { SelectedExpander.IsOpen = true; CloseDetailsButton.Focus(); }
+    }
+    void CloseDetails() { SelectedExpander.IsOpen = false; ResultsGrid.Focus(); }
+    void DetailsClick(object sender, RoutedEventArgs e) => ToggleDetails();
     void StrategyDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         if (operation == null && e.OriginalSource is DependencyObject source && ItemsControl.ContainerFromElement(ResultsGrid, source) is ListBoxItem)
-            SelectedExpander.IsOpen = true;
+            ToggleDetails();
+    }
+    void CloseDetailsClick(object sender, RoutedEventArgs e) => CloseDetails();
+    void DetailsBackdropClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (ReferenceEquals(e.OriginalSource, SelectedExpander)) { CloseDetails(); e.Handled = true; }
     }
     void HelpClick(object sender, RoutedEventArgs e) { var button = (Button)sender; if (HelpPopup.IsOpen && HelpPopup.PlacementTarget == button) { HelpPopup.IsOpen = false; return; } HelpText.Text = (string)button.Tag; HelpPopup.PlacementTarget = button; HelpPopup.IsOpen = true; }
     void HideClick(object sender, RoutedEventArgs e) => HideToTray();
@@ -475,7 +497,7 @@ public partial class MainWindow : Window
             AppUpdateText.Text = !AppUpdater.Configured ? "Razret " + AppUpdater.Version + ". Источник обновлений будет подключён после настройки GitHub."
                 : appRelease == null ? "Razret " + AppUpdater.Version + " — новых выпусков нет."
                 : "Доступен Razret " + appRelease.Version + ". Настройки и выбранная стратегия сохранятся. После установки приложение перезапустится.";
-            AppReleaseNotes.Text = appRelease?.Notes ?? "";
+            AppReleaseNotes.Text = appRelease == null ? "" : ReleaseNotesRu.Summarize(appRelease.Notes);
             ShowUpdateNotices();
             if (appRelease != null && notifiedAppVersion != appRelease.Version)
             {
@@ -489,6 +511,8 @@ public partial class MainWindow : Window
         finally { appCheckRunning = false; AppCheckButton.IsEnabled = operation == null; AppInstallButton.IsEnabled = operation == null && appRelease != null; }
     }
     async void AppCheckClick(object sender, RoutedEventArgs e) => await Work(CheckAppUpdate);
+    void AppSourceClick(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo($"https://github.com/{AppUpdater.Repository}/releases/latest") { UseShellExecute = true });
+    void EngineSourceClick(object sender, RoutedEventArgs e) => Process.Start(new ProcessStartInfo("https://github.com/Flowseal/zapret-discord-youtube/releases/latest") { UseShellExecute = true });
     void OpenUpdateSection(FrameworkElement section)
     {
         Pages.SelectedIndex = 2;
@@ -528,7 +552,7 @@ public partial class MainWindow : Window
         appRelease = new(appVersion, "https://example.invalid/app.zip", "", 1, "Новый интерфейс и улучшения стабильности.");
         release = new(engineVersion, "https://example.invalid/engine.zip", "", 1, "Обновлены стратегии обхода.");
         AppUpdateText.Text = "Доступен Razret " + appVersion + ". Настройки сохранятся. После установки приложение перезапустится.";
-        AppReleaseNotes.Text = appRelease.Notes;
+        AppReleaseNotes.Text = ReleaseNotesRu.Summarize(appRelease.Notes);
         AppInstallButton.IsEnabled = true;
         ShowRelease();
     }
