@@ -155,13 +155,16 @@ public static class SelfTest
                     window.Close(); Assert(!closed && !window.IsVisible, "close hides to tray");
                     window.ShowFromTray(); Assert(window.IsVisible && !closed, "restore from tray");
                     window.Pages.SelectedIndex = 1; window.UpdateLayout(); Assert(window.StartupBox.IsVisible, "settings reachable");
-                    var dark = ((SolidColorBrush)window.Resources["Canvas"]).Color;
-                    window.ThemeBox.SelectedIndex = 1; Assert(((SolidColorBrush)window.Resources["Canvas"]).Color != dark, "theme switches without restart");
-                    window.ThemeBox.SelectedIndex = 0; Assert(((SolidColorBrush)window.Resources["Canvas"]).Color == dark, "dark theme restored");
+                    var dark = ((SolidColorBrush)window.Resources["Text"]).Color;
+                    window.ThemeBox.SelectedIndex = 1; Assert(((SolidColorBrush)window.Resources["Text"]).Color != dark, "theme switches without restart");
+                    window.ThemeBox.SelectedIndex = 0; Assert(((SolidColorBrush)window.Resources["Text"]).Color == dark, "dark theme restored");
                     var visual = new MainWindow(preview: true);
                     try
                     {
                         visual.Show(); visual.ResultsGrid.SelectedIndex = 2;
+                        var embeddedFace = new Typeface(visual.FontFamily, FontStyles.Normal, FontWeights.Normal, FontStretches.Normal);
+                        Assert(embeddedFace.TryGetGlyphTypeface(out var glyphFace) && glyphFace.FamilyNames.Values.Any(n => n.StartsWith("Inter")), "embedded Inter font resolves without system installation");
+                        Assert(glyphFace.FontUri.ToString().Contains("Assets/Fonts", StringComparison.OrdinalIgnoreCase), "UI uses packaged font instead of a machine-specific fallback");
                         Assert(visual.PowerStrategy == ((MainWindow.Row)visual.ResultsGrid.SelectedItem).Name, "power uses selected strategy before saving");
                         visual.PreviewActiveState(); visual.UpdateLayout();
                         var active = (MainWindow.Row)visual.ResultsGrid.Items[0];

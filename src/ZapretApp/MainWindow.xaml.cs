@@ -175,7 +175,7 @@ public partial class MainWindow : Window
         Pages.MinHeight = compact ? 40 : Pages.SelectedIndex == 0 ? 110 : 180;
         bool grid = !compact && Pages.SelectedIndex == 0 && settings.StrategyView == "tiles";
         MinWidth = Math.Min(SystemParameters.WorkArea.Width, grid ? 520 : 440);
-        MinHeight = Math.Min(available, compact ? 250 : 420);
+        MinHeight = Math.Min(available, compact ? 250 : 432);
         MaxHeight = compact ? available : double.PositiveInfinity;
         if (WindowState == WindowState.Normal)
         {

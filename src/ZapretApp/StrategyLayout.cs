@@ -6,7 +6,7 @@ internal readonly record struct StrategyLayout(double Width, double Height, int 
     // Includes window chrome, connection card, section actions and fixed footer.
     internal static StrategyLayout Grid(double availableWidth, double availableHeight, int count, double extraHeight = 0)
     {
-        var baseHeight = 338 + extraHeight;
+        var baseHeight = 350 + extraHeight;
         int maxColumns = Math.Max(1, (int)Math.Floor((availableWidth - 52) / 154));
         int columns = Math.Min(4, maxColumns);
         double height = baseHeight + Math.Ceiling(Math.Max(1, count) / (double)columns) * TileHeight;
